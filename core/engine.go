@@ -25,6 +25,7 @@ type Options struct {
 	Direct                                                       bool
 	AutoProbe                                                    bool
 	ParentWatch                                                  bool
+	VPN                                                          bool
 	Strategy, DNS                                                string
 }
 type Status struct {
@@ -444,7 +445,9 @@ func (e *Engine) failure(id string, target bool) {
 	}
 }
 func (e *Engine) sample(id string, speed float64) {
-	if speed < minimumSpeed {
+	// Native clients pace video requests and keep HTTP/2 streams idle. Their
+	// bitrate is not a capacity test and must not repeatedly reset a working VPN.
+	if speed < minimumSpeed && !e.opts.VPN {
 		e.failure(id, true)
 		return
 	}

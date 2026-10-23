@@ -91,6 +91,7 @@ func (e *Engine) probeLoop(check func(context.Context, *childProcess) error) {
 				e.eventLocked(id, "ciadpi: "+p.output.String())
 			}
 			e.mu.Unlock()
+			e.resolver.retryAfterFailure("m.youtube.com")
 			e.next(id)
 		}
 	}

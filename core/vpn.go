@@ -37,7 +37,15 @@ func (e *Engine) PrepareTCP(parent context.Context, destination net.IP, port uin
 		if child == nil {
 			return nil, id, errors.New("ciadpi unavailable")
 		}
-		c, err := dialSOCKS(ctx, child.addr, destination, port)
+		host, ips := e.resolver.destinationCandidates(destination)
+		dial := func(ctx context.Context, ip net.IP) (net.Conn, error) { return dialSOCKS(ctx, child.addr, ip, port) }
+		c, err := dialCandidates(ctx, ips, dial)
+		if err != nil && host != "" && ctx.Err() == nil {
+			e.resolver.retryAfterFailure(host)
+			if alternate, resolveErr := e.resolver.Resolve(ctx, host); resolveErr == nil {
+				c, err = dialCandidates(ctx, alternate, dial)
+			}
+		}
 		return c, id, err
 	}
 	c, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(destination.String(), strconv.Itoa(int(port))))

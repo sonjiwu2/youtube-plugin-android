@@ -110,3 +110,43 @@ func TestSnapshotDetectsExitedEngine(t *testing.T) {
 		t.Fatal("repeated death event")
 	}
 }
+
+func TestNativePlaybackPacingDoesNotChangeStrategy(t *testing.T) {
+	e, err := Start(Options{Direct: true, VPN: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Stop()
+	id := e.Snapshot().StrategyID
+	for range 5 {
+		e.sample(id, minimumSpeed/10)
+	}
+	if s := e.Snapshot(); s.StrategyID != id || s.State != "ready" || s.Attempts != 1 {
+		t.Fatalf("paced video changed strategy: %+v", s)
+	}
+}
+
+func TestAutomaticDNSRetriesDifferentProvider(t *testing.T) {
+	r := NewResolver(nil)
+	ip := net.ParseIP("142.250.74.206")
+	r.cache["youtube.com"] = dnsEntry{IPs: []net.IP{ip}, Until: time.Now().Add(time.Minute)}
+	r.sources["youtube.com"] = "dns.google"
+	host, ips := r.destinationCandidates(ip)
+	if host != "youtube.com" || len(ips) != 2 {
+		t.Fatal("lost original DNS association")
+	}
+	r.retryAfterFailure(host)
+	if r.preferred != "cloudflare-dns.com" || len(r.cache) != 0 {
+		t.Fatal("kept unreachable DNS answer")
+	}
+	r.retryAfterFailure(host)
+	if r.preferred != "cloudflare-dns.com" {
+		t.Fatal("concurrent failures undid failover")
+	}
+	r = NewResolver(nil)
+	r.selectProvider("google")
+	r.retryAfterFailure("youtube.com")
+	if r.preferred != "" {
+		t.Fatal("overrode explicit DNS choice")
+	}
+}

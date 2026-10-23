@@ -45,7 +45,7 @@ func (e *Engine) StartVPN(fd int, executable, fakePath, dataDir, profile, remote
 	if e.inner != nil {
 		return errors.New("engine already running")
 	}
-	inner, err := core.Start(core.Options{Executable: executable, FakePath: fakePath, DataDir: dataDir, Profile: profile, RemoteURL: remoteURL, PublicKey: publicKey, AutoProbe: true, Strategy: strategy, DNS: dns, ParentWatch: true})
+	inner, err := core.Start(core.Options{Executable: executable, FakePath: fakePath, DataDir: dataDir, Profile: profile, RemoteURL: remoteURL, PublicKey: publicKey, AutoProbe: true, Strategy: strategy, DNS: dns, ParentWatch: true, VPN: true})
 	if err != nil {
 		return err
 	}

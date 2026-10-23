@@ -24,13 +24,15 @@ type Resolver struct {
 	mu            sync.Mutex
 	cache         map[string]dnsEntry
 	providers     []dohProvider
+	preferred     string
+	sources       map[string]string
 	fallback      map[string][]string
 	inflight      map[string]chan struct{}
 	dialBootstrap func(context.Context, string) (net.Conn, error)
 }
 
 func NewResolver(fallback map[string][]string) *Resolver {
-	return &Resolver{cache: map[string]dnsEntry{}, inflight: map[string]chan struct{}{}, fallback: fallback, providers: []dohProvider{
+	return &Resolver{cache: map[string]dnsEntry{}, sources: map[string]string{}, inflight: map[string]chan struct{}{}, fallback: fallback, providers: []dohProvider{
 		{"dns.google", "8.8.8.8", "/resolve"}, {"cloudflare-dns.com", "1.1.1.1", "/dns-query"}, {"dns.google", "8.8.4.4", "/resolve"}, {"cloudflare-dns.com", "1.0.0.1", "/dns-query"},
 		{"dns.google", "2001:4860:4860::8888", "/resolve"}, {"cloudflare-dns.com", "2606:4700:4700::1111", "/dns-query"},
 	}}
@@ -95,11 +97,29 @@ func (r *Resolver) Resolve(ctx context.Context, host string) ([]net.IP, error) {
 		ips []net.IP
 		ttl time.Duration
 	}
-	answers := make(chan result, len(r.providers))
-	for _, p := range r.providers {
-		go func(p dohProvider) { ips, ttl, _ := r.query(ctx, p, host); answers <- result{ips, ttl} }(p)
+	r.mu.Lock()
+	providers := append([]dohProvider{}, r.providers...)
+	if r.preferred != "" {
+		providers = nil
+		for _, p := range r.providers {
+			if p.Host == r.preferred {
+				providers = append(providers, p)
+			}
+		}
 	}
-	for range r.providers {
+	r.mu.Unlock()
+	type sourcedResult struct {
+		result
+		source string
+	}
+	answers := make(chan sourcedResult, len(providers))
+	for _, p := range providers {
+		go func(p dohProvider) {
+			ips, ttl, _ := r.query(ctx, p, host)
+			answers <- sourcedResult{result{ips, ttl}, p.Host}
+		}(p)
+	}
+	for range providers {
 		select {
 		case a := <-answers:
 			if len(a.ips) > 0 {
@@ -108,6 +128,9 @@ func (r *Resolver) Resolve(ctx context.Context, host string) ([]net.IP, error) {
 					clear(r.cache)
 				}
 				r.cache[host] = dnsEntry{a.ips, time.Now().Add(a.ttl)}
+				if r.sources == nil { r.sources = map[string]string{} }
+				if len(r.sources) > 2048 { clear(r.sources) }
+				r.sources[host] = a.source
 				r.mu.Unlock()
 				return a.ips, nil
 			}
@@ -116,6 +139,46 @@ func (r *Resolver) Resolve(ctx context.Context, host string) ([]net.IP, error) {
 		}
 	}
 	return r.fallbackFor(host)
+}
+
+// An answer can be authentic but contain unreachable regional frontends. In
+// automatic mode a failed connection must try the other encrypted resolver,
+// rather than exhausting every DPI preset against the same dead addresses.
+func (r *Resolver) retryAfterFailure(host string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	source := r.sources[normalizeHost(host)]
+	if source == "" {
+		source = r.preferred
+	}
+	if source == "" && len(r.providers) > 0 {
+		source = r.providers[0].Host
+	}
+	if r.preferred == "" || r.preferred == source {
+		for _, p := range r.providers {
+			if p.Host != source {
+				r.preferred = p.Host
+				break
+			}
+		}
+	}
+	clear(r.cache)
+}
+
+func (r *Resolver) destinationCandidates(destination net.IP) (string, []net.IP) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for host, entry := range r.cache {
+		if !MatchHost(host, DefaultHosts) || !time.Now().Before(entry.Until) {
+			continue
+		}
+		for _, ip := range entry.IPs {
+			if ip.Equal(destination) {
+				return host, append([]net.IP{destination}, entry.IPs...)
+			}
+		}
+	}
+	return "", []net.IP{destination}
 }
 
 func (r *Resolver) fallbackFor(host string) ([]net.IP, error) {
@@ -132,6 +195,7 @@ func (r *Resolver) fallbackFor(host string) ([]net.IP, error) {
 			clear(r.cache)
 		}
 		r.cache[host] = dnsEntry{Until: time.Now().Add(10 * time.Second)}
+		if r.sources != nil { r.sources[host] = r.preferred }
 		r.mu.Unlock()
 		return nil, fmt.Errorf("DoH unavailable for %s", host)
 	}
@@ -140,6 +204,7 @@ func (r *Resolver) fallbackFor(host string) ([]net.IP, error) {
 		clear(r.cache)
 	}
 	r.cache[host] = dnsEntry{IPs: ips, Until: time.Now().Add(30 * time.Second)}
+	if r.sources != nil { r.sources[host] = r.preferred }
 	r.mu.Unlock()
 	return ips, nil
 }
