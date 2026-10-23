@@ -230,6 +230,23 @@ func (r *Resolver) prefer(host string, ip net.IP) {
 	r.cache[host] = entry
 }
 
+// The TUN handshake terminates locally, so the app cannot use its own TCP
+// Happy Eyeballs to discover a broken upstream IPv6 route. Race only addresses
+// from the same DNS answer, preserving the original destination for ECH.
+func (r *Resolver) candidates(host string, destination net.IP) []net.IP {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry := r.cache[normalizeHost(host)]
+	if time.Now().Before(entry.Until) {
+		for _, ip := range entry.IPs {
+			if ip.Equal(destination) {
+				return append([]net.IP{destination}, entry.IPs...)
+			}
+		}
+	}
+	return []net.IP{destination}
+}
+
 func (r *Resolver) queryTypeRoute(ctx context.Context, p dohProvider, host, kind string, direct bool) ([]net.IP, time.Duration, error) {
 	tr := &http.Transport{Proxy: nil, TLSClientConfig: &tls.Config{ServerName: p.Host, MinVersion: tls.VersionTLS12}, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		if r.dialBootstrap != nil && !direct {

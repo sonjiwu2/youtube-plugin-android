@@ -62,6 +62,9 @@ func (e *Engine) ServeTCP(c net.Conn, destination net.IP, port uint16) {
 	}
 	hello, host, err := ReadClientHello(c)
 	if err != nil {
+		e.mu.Lock()
+		e.eventLocked(e.status.StrategyID, "VPN TLS "+destination.String()+": "+err.Error())
+		e.mu.Unlock()
 		return
 	}
 	e.mu.Lock()
@@ -72,7 +75,7 @@ func (e *Engine) ServeTCP(c net.Conn, destination net.IP, port uint16) {
 	}
 	// The original destination is authoritative, including ECH outer names.
 	// All TLS from YouTube uses desync, including account and image endpoints.
-	e.forwardTLS(c, host, []net.IP{destination}, hello, true, MatchHost(host, DefaultHosts))
+	e.forwardTLS(c, host, e.resolver.candidates(host, destination), hello, true, MatchHost(host, DefaultHosts))
 }
 
 func (e *Engine) StrategiesJSON() string {
@@ -94,7 +97,15 @@ func (e *Engine) StrategiesJSON() string {
 // HTTPS/SVCB records are deliberately empty: HTTP/3 isn't supported by this
 // TCP desync engine, and the client must negotiate HTTPS over TCP instead.
 func (e *Engine) DNS(query []byte) []byte {
-	return answerDNS(e.ctx, query, e.resolver.Resolve)
+	return answerDNS(e.ctx, query, func(ctx context.Context, host string) ([]net.IP, error) {
+		ips, err := e.resolver.Resolve(ctx, host)
+		if err != nil {
+			e.mu.Lock()
+			e.eventLocked(e.status.StrategyID, "VPN DNS "+host+": "+err.Error())
+			e.mu.Unlock()
+		}
+		return ips, err
+	})
 }
 
 func answerDNS(ctx context.Context, query []byte, resolve func(context.Context, string) ([]net.IP, error)) []byte {

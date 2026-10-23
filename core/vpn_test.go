@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"testing"
+	"time"
 
 	"golang.org/x/net/dns/dnsmessage"
 )
@@ -45,6 +46,21 @@ func TestVPNDNS(t *testing.T) {
 		if answerDNS(context.Background(), malformed, nil) != nil {
 			t.Fatal("accepted malformed DNS")
 		}
+	}
+}
+
+func TestVPNFamilyFallbackStaysWithinDNSAnswer(t *testing.T) {
+	r := NewResolver(nil)
+	v4, v6 := net.ParseIP("142.250.74.206"), net.ParseIP("2a00:1450:4001:80f::200e")
+	r.cache["youtube.com"] = dnsEntry{IPs: []net.IP{v4, v6}, Until: time.Now().Add(time.Minute)}
+	if len(r.candidates("youtube.com", v6)) != 3 {
+		t.Fatal("lost IPv4 fallback")
+	}
+	if len(r.candidates("other.example", v6)) != 1 {
+		t.Fatal("changed ECH destination")
+	}
+	if len(r.candidates("youtube.com", net.ParseIP("8.8.8.8"))) != 1 {
+		t.Fatal("replaced a destination outside the DNS answer")
 	}
 }
 
