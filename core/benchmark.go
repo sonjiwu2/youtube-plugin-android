@@ -36,14 +36,9 @@ func (e *Engine) Measure(address string) string {
 				if err != nil {
 					return nil, err
 				}
-				for _, ip := range ips {
-					var c net.Conn
-					c, err = (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort(ip.String(), "443"))
-					if err == nil {
-						return c, nil
-					}
-				}
-				return nil, err
+				return dialCandidates(ctx, ips, func(ctx context.Context, ip net.IP) (net.Conn, error) {
+					return (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort(ip.String(), "443"))
+				})
 			}
 		} else {
 			proxy, _ := url.Parse("http://" + e.Address())

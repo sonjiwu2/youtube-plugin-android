@@ -14,6 +14,8 @@ func dialSOCKS(ctx context.Context, proxy string, ip net.IP, port uint16) (net.C
 	if err != nil {
 		return nil, err
 	}
+	stopCancel := context.AfterFunc(ctx, func() { c.Close() })
+	defer stopCancel()
 	ok := false
 	defer func() {
 		if !ok {

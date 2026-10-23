@@ -221,19 +221,16 @@ func (e *Engine) handle(c net.Conn) {
 	e.mu.Lock()
 	p := e.child
 	e.mu.Unlock()
-	for _, ip := range ips {
+	upstream, err = dialCandidates(ctx, ips, func(ctx context.Context, ip net.IP) (net.Conn, error) {
 		if target && !e.opts.Direct {
 			if p == nil {
-				break
+				return nil, errors.New("ciadpi unavailable")
 			}
-			upstream, err = dialSOCKS(ctx, p.addr, ip, 443)
+			return dialSOCKS(ctx, p.addr, ip, 443)
 		} else {
-			upstream, err = (&net.Dialer{Timeout: 4 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort(ip.String(), "443"))
+			return (&net.Dialer{Timeout: 4 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort(ip.String(), "443"))
 		}
-		if err == nil && upstream != nil {
-			break
-		}
-	}
+	})
 	if upstream == nil || err != nil {
 		if err != nil {
 			e.noteError(id, "Соединение с сервером: "+err.Error())

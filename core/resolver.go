@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"sync"
 	"time"
 )
@@ -147,6 +148,8 @@ func (r *Resolver) query(ctx context.Context, p dohProvider, host string) ([]net
 			return ips, ttl, ctx.Err()
 		}
 	}
+	// У части мобильных сетей IPv6 объявлен, но недоступен; IPv4 получает небольшой приоритет.
+	sort.SliceStable(ips, func(i, j int) bool { return ips[i].To4() != nil && ips[j].To4() == nil })
 	return ips, ttl, nil
 }
 

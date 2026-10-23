@@ -125,13 +125,15 @@ class MainActivity : ComponentActivity() {
             while (started && generation == token) {
                 val next = controller.status()
                 if (generation != token) break
+                if (BuildConfig.DEBUG && next.error.isNotEmpty() && next.error != status.error)
+                    android.util.Log.d("RazgonEngine", next.error)
                 status = next
                 if (next.state == "blocked") { ready = false; destroyBrowser() }
                 else if (next.strategyId != observedStrategy) {
                     val changed = observedStrategy.isNotEmpty()
                     observedStrategy = next.strategyId; strategySince = System.currentTimeMillis()
                     if (changed) { pageError = ""; webView?.reload() }
-                } else if (loading && System.currentTimeMillis() - strategySince > 30_000 && !retryPending) nextStrategy()
+                } else if (loading && next.state != "ready" && System.currentTimeMillis() - strategySince > 30_000 && !retryPending) nextStrategy()
                 updateNotification(); delay(1_000)
             }
         }

@@ -58,7 +58,7 @@ Android SDK 37, targetSdk 36, NDK `28.2.13676358`, CMake `3.31.6`.
 ```powershell
 android sdk install ndk/28.2.13676358
 android sdk install cmake/3.31.6
-android sdk install platforms/android-37
+android sdk install platforms/android-37.0
 ```
 
 Windows PowerShell, из корня репозитория:
