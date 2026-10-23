@@ -11,8 +11,8 @@ android {
         applicationId = "ru.razgon.app"
         minSdk = 24
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.1.0"
+        versionCode = 5
+        versionName = "0.2.0"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }
 
@@ -56,7 +56,6 @@ android {
 
 dependencies {
     implementation(files("libs/engine.aar"))
-    implementation(libs.androidx.webkit)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)

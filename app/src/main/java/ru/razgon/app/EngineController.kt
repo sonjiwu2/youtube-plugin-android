@@ -1,80 +1,52 @@
 package ru.razgon.app
 
 import android.content.Context
-import androidx.webkit.ProxyConfig
-import androidx.webkit.ProxyController
-import androidx.webkit.WebViewFeature
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.suspendCancellableCoroutine
+import org.json.JSONArray
 import org.json.JSONObject
 import ru.razgon.mobile.Mobile
 import ru.razgon.mobile.Engine
 import java.io.File
-import java.util.concurrent.Executor
-import kotlin.coroutines.resume
 
 data class EngineStatus(
-    val state: String = "starting", val strategy: String = "", val strategyId: String = "",
-    val speed: Double = 0.0, val bytes: Long = 0, val attempts: Int = 0,
-    val update: String = "", val error: String = "",
-    val verified: Boolean = false,
+    val state: String = "stopped", val strategy: String = "", val strategyId: String = "",
+    val downloaded: Long = 0, val uploaded: Long = 0, val attempts: Int = 0,
+    val update: String = "", val error: String = "", val verified: Boolean = false,
 )
+data class StrategyChoice(val id: String, val name: String)
 
+// Owned exclusively by PluginVpnService, never by the activity.
 class EngineController(private val context: Context) {
     private var engine: Engine? = null
-
-    suspend fun start(profile: String) {
-        check(WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) { "Обновите Android System WebView: эта версия не поддерживает локальный прокси." }
+    fun start(fd: Int, profile: String, settings: PluginSettings) {
+        check(engine == null)
         val next = Mobile.newEngine()
-        engine = next
         try {
-            val port = withContext(Dispatchers.IO) {
-                val data = File(context.filesDir, "engine").apply { mkdirs() }
-                val fake = File(data, "google.bin")
-                context.assets.open("tls_clienthello_www_google_com.bin").use { input -> fake.outputStream().use { input.copyTo(it) } }
-                val pub = context.assets.open("config-public.txt").bufferedReader().use { it.readText().trim() }
-                next.start(File(context.applicationInfo.nativeLibraryDir, "libciadpi.so").absolutePath,
-                    fake.absolutePath, data.absolutePath, profile,
-                    "https://raw.githubusercontent.com/sonjiwu2/youtube-plugin-android/main/updates/strategies.json", pub)
-            }
-            setProxy(port.toInt())
-        } catch (error: Exception) {
-            withContext(NonCancellable + Dispatchers.IO) { next.stop() }
-            engine = null
-            throw error
-        }
+            val data = File(context.filesDir, "engine").apply { mkdirs() }
+            val fake = File(data, "google.bin")
+            context.assets.open("tls_clienthello_www_google_com.bin").use { input -> fake.outputStream().use { input.copyTo(it) } }
+            val pub = context.assets.open("config-public.txt").bufferedReader().use { it.readText().trim() }
+            next.startVPN(fd.toLong(), File(context.applicationInfo.nativeLibraryDir, "libciadpi.so").absolutePath,
+                fake.absolutePath, data.absolutePath, profile,
+                "https://raw.githubusercontent.com/sonjiwu2/youtube-plugin-android/main/updates/strategies.json",
+                pub, settings.strategy, settings.dns)
+            engine = next
+        } catch (error: Exception) { next.stop(); throw error }
     }
-
-    private suspend fun setProxy(port: Int) = withTimeout(5_000) {
-        check(WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE))
-        suspendCancellableCoroutine { continuation ->
-            val config = ProxyConfig.Builder().addProxyRule("http://127.0.0.1:$port").removeImplicitRules().build()
-            ProxyController.getInstance().setProxyOverride(config, Executor { it.run() }) {
-                if (continuation.isActive) continuation.resume(Unit)
-            }
-        }
-    }
-
-    suspend fun stop() {
-        val current = engine
-        engine = null
-        // Оставляем override на закрытом порту: во время остановки прямого пути нет.
-        if (current != null) withContext(NonCancellable + Dispatchers.IO) { current.stop() }
-    }
-
-    suspend fun next() = withContext(Dispatchers.IO) { engine?.next(); Unit }
-    suspend fun measure(address: String): String {
-        val current = engine ?: return "{\"Error\":\"Движок остановлен\"}"
-        return withContext(Dispatchers.IO) { current.measure(address) }
-    }
-    suspend fun diagnostics(): String = withContext(Dispatchers.IO) { engine?.diagnostics() ?: "Движок остановлен" }
-    suspend fun status(): EngineStatus = withContext(Dispatchers.IO) {
-        val json = JSONObject(engine?.status() ?: "{\"state\":\"stopped\"}")
-        EngineStatus(json.optString("state"), json.optString("strategy"), json.optString("strategyId"),
-            json.optDouble("bytesPerSecond", 0.0), json.optLong("totalBytes"), json.optInt("attempts"),
+    fun stop() { engine?.stop(); engine = null }
+    fun diagnostics(): String = engine?.diagnostics() ?: "Движок остановлен"
+    fun status(): EngineStatus {
+        val json = JSONObject(engine?.status() ?: "{}")
+        return EngineStatus(json.optString("state", "stopped"), json.optString("strategy"), json.optString("strategyId"),
+            json.optLong("totalBytes"), json.optLong("uploadedBytes"), json.optInt("attempts"),
             json.optString("update"), json.optString("error"), json.optBoolean("verified"))
+    }
+    fun strategies(): List<StrategyChoice> = parseStrategies(engine?.strategies() ?: Mobile.newEngine().strategies())
+    companion object {
+        fun parseStrategies(raw: String): List<StrategyChoice> {
+            val json = JSONArray(raw)
+            return listOf(StrategyChoice("auto", "Автоподбор")) + (0 until json.length()).map {
+                json.getJSONObject(it).let { value -> StrategyChoice(value.getString("id"), value.getString("name")) }
+            }.filter { it.id != "auto" }
+        }
     }
 }
