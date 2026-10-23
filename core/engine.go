@@ -173,6 +173,7 @@ func (e *Engine) handle(c net.Conn) {
 		return
 	}
 	target := MatchHost(host, DefaultHosts)
+	adaptive := MatchHost(host, []string{"youtube.com", "googlevideo.com", "youtubei.googleapis.com"})
 	e.mu.Lock()
 	id := e.status.StrategyID
 	blocked := e.status.State == "blocked"
@@ -184,7 +185,8 @@ func (e *Engine) handle(c net.Conn) {
 	ips, err := e.resolver.Resolve(e.ctx, host)
 	if err != nil {
 		io.WriteString(c, "HTTP/1.1 502 Bad Gateway\r\n\r\n")
-		e.failure(id, target)
+		e.noteError(id, "DoH недоступен")
+		e.failure(id, adaptive)
 		return
 	}
 	if _, err = io.WriteString(c, "HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
@@ -195,9 +197,11 @@ func (e *Engine) handle(c net.Conn) {
 	io.ReadFull(r, buffered)
 	hello, sni, err := ReadClientHello(io.MultiReader(strings.NewReader(string(buffered)), c))
 	if err != nil {
+		e.noteError(id, "ClientHello: "+err.Error())
 		return
 	}
 	if sni != host {
+		e.noteError(id, "SNI не совпадает с CONNECT")
 		return
 	}
 	var upstream net.Conn
@@ -220,7 +224,10 @@ func (e *Engine) handle(c net.Conn) {
 		}
 	}
 	if upstream == nil || err != nil {
-		e.failure(id, target)
+		if err != nil {
+			e.noteError(id, "Соединение с сервером: "+err.Error())
+		}
+		e.failure(id, adaptive)
 		return
 	}
 	e.mu.Lock()
@@ -234,7 +241,7 @@ func (e *Engine) handle(c net.Conn) {
 	defer func() { upstream.Close(); e.mu.Lock(); delete(e.conns, upstream); e.mu.Unlock() }()
 	upstream.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	if _, err = upstream.Write(hello); err != nil {
-		e.failure(id, target)
+		e.failure(id, adaptive)
 		return
 	}
 	upstream.SetWriteDeadline(time.Time{})
@@ -242,10 +249,13 @@ func (e *Engine) handle(c net.Conn) {
 	done := make(chan struct{})
 	go func() { io.Copy(upstream, c); upstream.Close(); close(done) }()
 	bytes, speed, readErr := e.copyDown(c, upstream, MatchHost(host, []string{"googlevideo.com"}), id)
+	if bytes == 0 && readErr != nil {
+		e.noteError(id, "Нет ответа TLS: "+readErr.Error())
+	}
 	c.Close()
 	upstream.Close()
 	<-done
-	if target && bytes < 1024 && readErr != nil {
+	if adaptive && bytes < 1024 && readErr != nil {
 		e.failure(id, true)
 	} else if target && bytes >= 1024 {
 		e.mu.Lock()
@@ -263,6 +273,14 @@ func (e *Engine) handle(c net.Conn) {
 				e.failure(id, true)
 			}
 		}
+	}
+}
+
+func (e *Engine) noteError(id, message string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.status.StrategyID == id && e.status.State != "blocked" {
+		e.status.Error = message
 	}
 }
 
@@ -286,6 +304,9 @@ func (e *Engine) copyDown(dst, src net.Conn, video bool, id string) (int64, floa
 			}
 			e.mu.Lock()
 			e.status.Total += int64(n)
+			if total >= 1024 && e.status.StrategyID == id && e.status.State != "blocked" {
+				e.status.State = "ready"
+			}
 			if video && total >= 32768 && time.Since(start) > 300*time.Millisecond {
 				speed = float64(total) / time.Since(start).Seconds()
 				e.status.Speed = speed
@@ -359,7 +380,9 @@ func (e *Engine) next(expected string) {
 		for c := range e.conns {
 			c.Close()
 		}
+		old:=e.child;e.child=nil
 		e.mu.Unlock()
+		old.stop()
 		return
 	}
 	s := e.config.Strategies[next]

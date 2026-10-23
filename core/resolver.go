@@ -29,6 +29,7 @@ type Resolver struct {
 func NewResolver(fallback map[string][]string) *Resolver {
 	return &Resolver{cache: map[string]dnsEntry{}, fallback: fallback, providers: []dohProvider{
 		{"dns.google", "8.8.8.8", "/resolve"}, {"cloudflare-dns.com", "1.1.1.1", "/dns-query"}, {"dns.google", "8.8.4.4", "/resolve"}, {"cloudflare-dns.com", "1.0.0.1", "/dns-query"},
+		{"dns.google", "2001:4860:4860::8888", "/resolve"}, {"cloudflare-dns.com", "2606:4700:4700::1111", "/dns-query"},
 	}}
 }
 
@@ -93,12 +94,37 @@ func (r *Resolver) fallbackFor(host string) ([]net.IP, error) {
 }
 
 func (r *Resolver) query(ctx context.Context, p dohProvider, host string) ([]net.IP, time.Duration, error) {
+	type answer struct {
+		ips []net.IP
+		ttl time.Duration
+	}
+	answers := make(chan answer, 2)
+	for _, kind := range []string{"A", "AAAA"} {
+		go func(kind string) { ips, ttl, _ := r.queryType(ctx, p, host, kind); answers <- answer{ips, ttl} }(kind)
+	}
+	var ips []net.IP
+	ttl := 300 * time.Second
+	for range 2 {
+		select {
+		case a := <-answers:
+			ips = append(ips, a.ips...)
+			if a.ttl > 0 && a.ttl < ttl {
+				ttl = a.ttl
+			}
+		case <-ctx.Done():
+			return ips, ttl, ctx.Err()
+		}
+	}
+	return ips, ttl, nil
+}
+
+func (r *Resolver) queryType(ctx context.Context, p dohProvider, host, kind string) ([]net.IP, time.Duration, error) {
 	tr := &http.Transport{Proxy: nil, TLSClientConfig: &tls.Config{ServerName: p.Host, MinVersion: tls.VersionTLS12}, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort(p.IP, "443"))
 	}}
 	defer tr.CloseIdleConnections()
 	client := &http.Client{Transport: tr, Timeout: 5 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
-	req, err := http.NewRequestWithContext(ctx, "GET", "https://"+p.Host+p.Path+"?name="+url.QueryEscape(host)+"&type=A", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://"+p.Host+p.Path+"?name="+url.QueryEscape(host)+"&type="+kind, nil)
 	if err != nil {
 		return nil, 0, err
 	}

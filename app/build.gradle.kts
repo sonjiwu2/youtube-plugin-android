@@ -13,13 +13,24 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }
 
+    signingConfigs {
+        val keystorePath = System.getenv("ANDROID_KEYSTORE_FILE")
+        if (!keystorePath.isNullOrEmpty()) create("production") {
+            storeFile = file(keystorePath)
+            storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+            keyAlias = "razgon"
+            keyPassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+        }
+    }
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.findByName("production")
         }
     }
 
@@ -30,10 +41,23 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
+    }
+    packaging { jniLibs { useLegacyPackaging = true; keepDebugSymbols += "**/libciadpi.so" } }
+    splits {
+        abi {
+            isEnable = providers.gradleProperty("splitApk").isPresent
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86_64")
+            isUniversalApk = true
+        }
     }
 }
 
 dependencies {
+    implementation(files("libs/engine.aar"))
+    implementation(libs.androidx.webkit)
+    implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
@@ -45,3 +69,8 @@ dependencies {
 
     testImplementation(libs.junit)
 }
+
+tasks.register("checkEngine") {
+    doLast { check(file("libs/engine.aar").exists()) { "Сначала выполните scripts/build-engine.ps1 или scripts/build-engine.sh" } }
+}
+tasks.named("preBuild") { dependsOn("checkEngine") }
