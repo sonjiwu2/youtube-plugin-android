@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"io"
@@ -12,6 +13,82 @@ import (
 	"testing"
 	"time"
 )
+
+func TestClientCancellationDoesNotPenalizeStrategy(t *testing.T) {
+	socks, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer socks.Close()
+	go func() {
+		c, err := socks.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		c.SetDeadline(time.Now().Add(3 * time.Second))
+		b := make([]byte, 3)
+		io.ReadFull(c, b)
+		c.Write([]byte{5, 0})
+		b = make([]byte, 10)
+		io.ReadFull(c, b)
+		c.Write([]byte{5, 0, 0, 1, 127, 0, 0, 1, 1, 187})
+		io.Copy(io.Discard, c)
+	}()
+	e, err := Start(Options{Direct: true, DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.opts.Direct = false
+	e.child = &childProcess{addr: socks.Addr().String()}
+	e.resolver.cache["m.youtube.com"] = dnsEntry{[]net.IP{net.ParseIP("8.8.8.8")}, time.Now().Add(time.Minute)}
+	defer func() { e.mu.Lock(); e.child = nil; e.mu.Unlock(); e.Stop() }()
+	c, err := net.Dial("tcp", e.Address())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetDeadline(time.Now().Add(3 * time.Second))
+	io.WriteString(c, "CONNECT m.youtube.com:443 HTTP/1.1\r\nHost: m.youtube.com:443\r\n\r\n")
+	r := bufio.NewReader(c)
+	for {
+		line, err := r.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		if line == "\r\n" {
+			break
+		}
+	}
+	c.Write(clientHello(t))
+	c.Close()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		e.mu.Lock()
+		n, bad := len(e.conns), e.bad
+		e.mu.Unlock()
+		if n == 0 {
+			if bad != 0 {
+				t.Fatal("browser cancellation was treated as DPI failure")
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("cancelled client was not released")
+}
+
+func TestBenchmarkRejectsForeignURLs(t *testing.T) {
+	e, err := Start(Options{Direct: true, DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Stop()
+	for _, u := range []string{"http://r1.googlevideo.com/videoplayback", "https://googlevideo.com.evil.org/", "https://user@r1.googlevideo.com/", "https://127.0.0.1/", "https://r1.googlevideo.com:8443/"} {
+		if !strings.Contains(e.Measure(u), "Сначала") {
+			t.Fatal(u)
+		}
+	}
+}
 
 func TestSOCKSUsesNumericIP(t *testing.T) {
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")

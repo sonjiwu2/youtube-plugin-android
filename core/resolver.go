@@ -20,14 +20,16 @@ type dnsEntry struct {
 	Until time.Time
 }
 type Resolver struct {
-	mu        sync.Mutex
-	cache     map[string]dnsEntry
-	providers []dohProvider
-	fallback  map[string][]string
+	mu            sync.Mutex
+	cache         map[string]dnsEntry
+	providers     []dohProvider
+	fallback      map[string][]string
+	inflight      map[string]chan struct{}
+	dialBootstrap func(context.Context, string) (net.Conn, error)
 }
 
 func NewResolver(fallback map[string][]string) *Resolver {
-	return &Resolver{cache: map[string]dnsEntry{}, fallback: fallback, providers: []dohProvider{
+	return &Resolver{cache: map[string]dnsEntry{}, inflight: map[string]chan struct{}{}, fallback: fallback, providers: []dohProvider{
 		{"dns.google", "8.8.8.8", "/resolve"}, {"cloudflare-dns.com", "1.1.1.1", "/dns-query"}, {"dns.google", "8.8.4.4", "/resolve"}, {"cloudflare-dns.com", "1.0.0.1", "/dns-query"},
 		{"dns.google", "2001:4860:4860::8888", "/resolve"}, {"cloudflare-dns.com", "2606:4700:4700::1111", "/dns-query"},
 	}}
@@ -44,12 +46,30 @@ func (r *Resolver) Resolve(ctx context.Context, host string) ([]net.IP, error) {
 	if !ValidHost(host) {
 		return nil, errors.New("invalid hostname")
 	}
-	r.mu.Lock()
-	cached := r.cache[host]
-	r.mu.Unlock()
-	if time.Now().Before(cached.Until) {
-		return cached.IPs, nil
+	for {
+		r.mu.Lock()
+		cached := r.cache[host]
+		if time.Now().Before(cached.Until) {
+			r.mu.Unlock()
+			if len(cached.IPs) == 0 {
+				return nil, errors.New("DoH temporarily unavailable")
+			}
+			return cached.IPs, nil
+		}
+		if pending := r.inflight[host]; pending != nil {
+			r.mu.Unlock()
+			select {
+			case <-pending:
+				continue
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		r.inflight[host] = make(chan struct{})
+		r.mu.Unlock()
+		break
 	}
+	defer func() { r.mu.Lock(); close(r.inflight[host]); delete(r.inflight, host); r.mu.Unlock() }()
 	ctx, cancel := context.WithTimeout(ctx, 7*time.Second)
 	defer cancel()
 	type result struct {
@@ -88,8 +108,20 @@ func (r *Resolver) fallbackFor(host string) ([]net.IP, error) {
 		}
 	}
 	if len(ips) == 0 {
+		r.mu.Lock()
+		if len(r.cache) > 2048 {
+			clear(r.cache)
+		}
+		r.cache[host] = dnsEntry{Until: time.Now().Add(10 * time.Second)}
+		r.mu.Unlock()
 		return nil, fmt.Errorf("DoH unavailable for %s", host)
 	}
+	r.mu.Lock()
+	if len(r.cache) > 2048 {
+		clear(r.cache)
+	}
+	r.cache[host] = dnsEntry{IPs: ips, Until: time.Now().Add(30 * time.Second)}
+	r.mu.Unlock()
 	return ips, nil
 }
 
@@ -120,6 +152,9 @@ func (r *Resolver) query(ctx context.Context, p dohProvider, host string) ([]net
 
 func (r *Resolver) queryType(ctx context.Context, p dohProvider, host, kind string) ([]net.IP, time.Duration, error) {
 	tr := &http.Transport{Proxy: nil, TLSClientConfig: &tls.Config{ServerName: p.Host, MinVersion: tls.VersionTLS12}, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		if r.dialBootstrap != nil {
+			return r.dialBootstrap(ctx, p.IP)
+		}
 		return (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort(p.IP, "443"))
 	}}
 	defer tr.CloseIdleConnections()

@@ -43,7 +43,7 @@ func ReadClientHello(r io.Reader) ([]byte, string, error) {
 
 // ParseSNI разбирает длины всех полей, включая неизвестные расширения.
 func ParseSNI(h []byte) (string, error) {
-	if len(h) < 39 || h[0] != 1 {
+	if len(h) < 39 || h[0] != 1 || (int(h[1])<<16|int(h[2])<<8|int(h[3])) != len(h)-4 {
 		return "", ErrClientHello
 	}
 	take := func(p *int, n int) ([]byte, bool) {

@@ -86,6 +86,19 @@ func Start(opts Options) (*Engine, error) {
 			return nil, err
 		}
 	}
+	// Bootstrap тоже идёт через desync: DoH по имени может фильтроваться тем же DPI.
+	e.resolver.dialBootstrap = func(ctx context.Context, address string) (net.Conn, error) {
+		e.mu.Lock()
+		p := e.child
+		e.mu.Unlock()
+		if opts.Direct {
+			return (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort(address, "443"))
+		}
+		if p == nil {
+			return nil, errors.New("DoH engine unavailable")
+		}
+		return dialSOCKS(ctx, p.addr, net.ParseIP(address), 443)
+	}
 	e.status.Strategy = cfg.Strategies[e.index].Name
 	e.status.StrategyID = cfg.Strategies[e.index].ID
 	e.tried[e.status.StrategyID] = true
@@ -245,15 +258,22 @@ func (e *Engine) handle(c net.Conn) {
 	upstream.SetWriteDeadline(time.Time{})
 	c.SetDeadline(time.Time{})
 	done := make(chan struct{})
-	go func() { io.Copy(upstream, c); upstream.Close(); close(done) }()
+	clientEnded := make(chan struct{}, 1)
+	go func() { io.Copy(upstream, c); clientEnded <- struct{}{}; upstream.Close(); close(done) }()
 	bytes, speed, readErr := e.copyDown(c, upstream, MatchHost(host, []string{"googlevideo.com"}), id)
+	clientCancelled := false
+	select {
+	case <-clientEnded:
+		clientCancelled = true
+	default:
+	}
 	if bytes == 0 && readErr != nil {
 		e.noteError(id, "Нет ответа TLS: "+readErr.Error())
 	}
 	c.Close()
 	upstream.Close()
 	<-done
-	if adaptive && bytes < 1024 && readErr != nil {
+	if adaptive && !clientCancelled && bytes < 1024 && readErr != nil {
 		e.failure(id, true)
 	} else if target && bytes >= 1024 {
 		e.mu.Lock()
@@ -266,7 +286,7 @@ func (e *Engine) handle(c net.Conn) {
 	if MatchHost(host, []string{"googlevideo.com"}) {
 		if bytes >= 32768 && speed > 0 {
 			e.sample(id, speed)
-		} else if bytes < 32768 {
+		} else if bytes < 32768 && !clientCancelled {
 			if n, ok := readErr.(net.Error); ok && n.Timeout() {
 				e.failure(id, true)
 			}
