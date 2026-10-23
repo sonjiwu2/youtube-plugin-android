@@ -1,0 +1,61 @@
+# --- Gradle / Android ---
+.gradle/
+/build/
+**/build/
+local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+output-metadata.json
+
+# --- IDE ---
+.idea/
+*.iml
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# --- Go ---
+/core/bin/
+/core/dist/
+*.test
+*.out
+coverage.*
+go.work.sum
+
+# --- gomobile / нативные артефакты ---
+*.aar
+*-sources.jar
+/app/libs/
+/native/out/
+/app/src/main/jniLibs/
+
+# --- Ключи и секреты: приватный ключ подписи стратегий и keystore не храним в репозитории ---
+*.jks
+*.keystore
+keystore.properties
+*.key
+*.pem
+!**/pubkey*.pem
+signing/private*
+.env
+
+# --- Служебные файлы ассистентов и временные планы ---
+CLAUDE.md
+.claude/
+.cursor/
+.aider*
+.copilot/
+AGENTS.md
+PLAN*.md
+plan*.md
+*.plan
+.skills/
+.skill-cache/
+tmp/
+scratch/
