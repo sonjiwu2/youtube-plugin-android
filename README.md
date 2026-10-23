@@ -1,6 +1,6 @@
 # Youtube Plugin
 
-Open-source приложение для обхода ограничений YouTube на Android. Без внешнего VPN и root, с IP вашего провайдера.
+Open-source приложение для обхода ограничений YouTube на Android.
 
 [![Скачать Youtube Plugin 0.1.0](https://img.shields.io/badge/Скачать-Youtube%20Plugin%200.1.0-83b84b)](https://github.com/sonjiwu2/youtube-plugin-android/releases/latest)
 ![Android 7.0+](https://img.shields.io/badge/Android-7.0%2B-83b84b)
