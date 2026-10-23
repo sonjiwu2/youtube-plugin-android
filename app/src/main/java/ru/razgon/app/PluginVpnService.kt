@@ -41,7 +41,8 @@ class PluginVpnService : VpnService() {
             return START_NOT_STICKY
         }
         try {
-            val notification = notification(ConnectionState(state = "starting"))
+            val notification = notification(if (worker?.isActive == true) PluginState.mutable.value else ConnectionState(state = "starting"))
+            notified = ""
             if (Build.VERSION.SDK_INT >= 34) startForeground(NOTIFICATION, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
             else startForeground(NOTIFICATION, notification)
         } catch (error: Exception) {
