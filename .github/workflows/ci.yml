@@ -38,10 +38,6 @@ jobs:
         with:
           go-version: '1.26.3'
           cache-dependency-path: core/go.sum
-      - uses: android-actions/setup-android@v3
-        with:
-          packages: 'platform-tools'
-          log-accepted-android-sdk-licenses: false
       - uses: gradle/actions/setup-gradle@v4
       - name: SDK, NDK и CMake
         run: bash scripts/install-sdk.sh
