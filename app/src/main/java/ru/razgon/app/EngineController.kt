@@ -20,6 +20,7 @@ data class EngineStatus(
     val state: String = "starting", val strategy: String = "", val strategyId: String = "",
     val speed: Double = 0.0, val bytes: Long = 0, val attempts: Int = 0,
     val update: String = "", val error: String = "",
+    val verified: Boolean = false,
 )
 
 class EngineController(private val context: Context) {
@@ -37,7 +38,7 @@ class EngineController(private val context: Context) {
                 val pub = context.assets.open("config-public.txt").bufferedReader().use { it.readText().trim() }
                 next.start(File(context.applicationInfo.nativeLibraryDir, "libciadpi.so").absolutePath,
                     fake.absolutePath, data.absolutePath, profile,
-                    "https://github.com/sonjiwu2/youtube-android-zapret/releases/download/strategies/strategies.json", pub)
+                    "https://raw.githubusercontent.com/sonjiwu2/youtube-android-zapret/main/updates/strategies.json", pub)
             }
             setProxy(port.toInt())
         } catch (error: Exception) {
@@ -69,10 +70,11 @@ class EngineController(private val context: Context) {
         val current = engine ?: return "{\"Error\":\"Движок остановлен\"}"
         return withContext(Dispatchers.IO) { current.measure(address) }
     }
+    suspend fun diagnostics(): String = withContext(Dispatchers.IO) { engine?.diagnostics() ?: "Движок остановлен" }
     suspend fun status(): EngineStatus = withContext(Dispatchers.IO) {
         val json = JSONObject(engine?.status() ?: "{\"state\":\"stopped\"}")
         EngineStatus(json.optString("state"), json.optString("strategy"), json.optString("strategyId"),
             json.optDouble("bytesPerSecond", 0.0), json.optLong("totalBytes"), json.optInt("attempts"),
-            json.optString("update"), json.optString("error"))
+            json.optString("update"), json.optString("error"), json.optBoolean("verified"))
     }
 }

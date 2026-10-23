@@ -17,6 +17,9 @@ func dialCandidates(ctx context.Context, ips []net.IP, dial func(context.Context
 			ipv6 = append(ipv6, ip)
 		}
 	}
+	if len(ips) > 0 && ips[0].To4() == nil {
+		ipv4, ipv6 = ipv6, ipv4
+	}
 	for i := 0; i < len(ipv4) || i < len(ipv6); i++ {
 		if i < len(ipv4) {
 			ordered = append(ordered, ipv4[i])

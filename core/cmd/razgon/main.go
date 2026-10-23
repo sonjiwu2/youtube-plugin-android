@@ -15,7 +15,7 @@ func main() {
 	direct := flag.Bool("direct", false, "test CONNECT/DoH without desync")
 	duration := flag.Duration("duration", 0, "optional automatic shutdown")
 	flag.Parse()
-	e, err := core.Start(core.Options{Executable: *exe, FakePath: *fake, DataDir: "bin/state", Profile: "desktop", Direct: *direct})
+	e, err := core.Start(core.Options{Executable: *exe, FakePath: *fake, DataDir: "bin/state", Profile: "desktop", Direct: *direct, AutoProbe: !*direct})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

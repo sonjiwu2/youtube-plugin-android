@@ -6,3 +6,7 @@
 *.bat text eol=crlf
 *.bin binary
 *.jar binary
+
+# Ed25519 проверяет точные байты; checkout не должен менять переводы строк.
+updates/strategies.json -text
+updates/strategies.json.sig -text

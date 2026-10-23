@@ -1,6 +1,16 @@
 {
-  "version": 1,
+  "version": 1792770987,
   "strategies": [
+    {"id":"disorder-tlsrec","name":"Обратный порядок + TLS-рекорды","args":["-d","1","-r","1+s"]},
+    {"id":"oob-tlsend","name":"Внеполосный байт + конец SNI","args":["-o","1","-r","-5+se"]},
+    {"id":"multisplit-sni","name":"Несколько разрезов по SNI","args":["-d","1","-d","3+s","-s","6+s","-d","9+s","-s","12+s","-d","15+s","-s","20+s","-d","25+s","-s","30+s","-d","35+s","-r","1+s"]},
+    {"id":"disorder7-split2","name":"Обратный порядок · 7 / 2","args":["-d","7","-s","2"]},
+    {"id":"split-disorder-sni","name":"Разрез + обратный порядок SNI","args":["-s","1+s","-d","3+s"]},
+    {"id":"split-tlsrec3","name":"Разрез + TLS-рекорды · 3","args":["-s","1","-r","3+s"]},
+    {"id":"disoob-tlsrec","name":"Внеполосный обратный порядок","args":["-q","1","-r","1+s"]},
+    {"id":"fake-tlsrec8","name":"Google TLS + рекорды · TTL 8","args":["-f","-1","-t","8","-n","www.google.com","-l","@google","-r","1+s"]},
+    {"id":"fake-tlsrec5","name":"Google TLS + рекорды · TTL 5","args":["-f","-1","-t","5","-n","www.google.com","-l","@google","-r","1+s"]},
+    {"id":"fake-tlsrec3","name":"Google TLS + рекорды · TTL 3","args":["-f","-1","-t","3","-n","www.google.com","-l","@google","-r","1+s"]},
     {"id":"split-1","name":"Разрез TLS · 1","args":["-s","1"]},
     {"id":"disorder-1","name":"Обратный порядок · 1","args":["-d","1"]},
     {"id":"tlsrec-sni","name":"TLS-рекорды по SNI","args":["-r","1+s","-s","1"]},

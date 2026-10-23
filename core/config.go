@@ -92,7 +92,7 @@ func validateArgs(args []string) error {
 				return errors.New("invalid fake SNI")
 			}
 		case "-Q":
-			if v != "rand" && v != "orig" {
+			if v != "r" && v != "o" && v != "r,o" {
 				return errors.New("invalid TLS mod")
 			}
 		case "-l":

@@ -67,8 +67,9 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           mkdir -p dist
+          VERSION="$(sed -n 's/ *versionName = "\([^"]*\)"/\1/p' app/build.gradle.kts)"
           for ABI in arm64-v8a armeabi-v7a x86_64 universal; do
-            cp "app/build/outputs/apk/release/app-$ABI-release.apk" "dist/razgon-$GITHUB_REF_NAME-$ABI.apk"
+            cp "app/build/outputs/apk/release/app-$ABI-release.apk" "dist/razgon-v$VERSION-$ABI.apk"
           done
           (cd dist && sha256sum *.apk > SHA256SUMS.txt)
       - uses: actions/upload-artifact@v4
@@ -92,4 +93,11 @@ jobs:
       - name: Опубликовать релиз
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "Разгон $GITHUB_REF_NAME" --notes-file docs/RELEASE.md
+        run: |
+          VERSION="$(sed -n 's/ *versionName = "\([^"]*\)"/\1/p' app/build.gradle.kts)"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+            gh release edit "$GITHUB_REF_NAME" --title "Разгон $VERSION" --notes-file docs/RELEASE.md --latest --prerelease=false --draft=false
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "Разгон $VERSION" --notes-file docs/RELEASE.md --latest
+          fi

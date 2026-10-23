@@ -19,7 +19,7 @@ func (e *Engine) Start(executable, fakePath, dataDir, profile, remoteURL, public
 	if e.inner != nil {
 		return 0, errors.New("engine already running")
 	}
-	inner, err := core.Start(core.Options{Executable: executable, FakePath: fakePath, DataDir: dataDir, Profile: profile, RemoteURL: remoteURL, PublicKey: publicKey})
+	inner, err := core.Start(core.Options{Executable: executable, FakePath: fakePath, DataDir: dataDir, Profile: profile, RemoteURL: remoteURL, PublicKey: publicKey, AutoProbe: true})
 	if err != nil {
 		return 0, err
 	}
@@ -58,4 +58,13 @@ func (e *Engine) Measure(address string) string {
 		return `{"Error":"Движок остановлен"}`
 	}
 	return inner.Measure(address)
+}
+
+func (e *Engine) Diagnostics() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.inner == nil {
+		return "Движок остановлен"
+	}
+	return e.inner.Diagnostics()
 }

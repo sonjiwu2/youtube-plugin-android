@@ -22,6 +22,7 @@ const minimumSpeed = 96 * 1024
 type Options struct {
 	Executable, FakePath, DataDir, Profile, RemoteURL, PublicKey string
 	Direct                                                       bool
+	AutoProbe                                                    bool
 }
 type Status struct {
 	State         string  `json:"state"`
@@ -33,23 +34,27 @@ type Status struct {
 	ConfigVersion int64   `json:"configVersion"`
 	Update        string  `json:"update"`
 	Error         string  `json:"error"`
+	Verified      bool    `json:"verified"`
 }
 type Engine struct {
-	mu         sync.Mutex
-	switchMu   sync.Mutex
-	ctx        context.Context
-	cancel     context.CancelFunc
-	opts       Options
-	config     Config
-	resolver   *Resolver
-	listener   net.Listener
-	child      *childProcess
-	conns      map[net.Conn]bool
-	wg         sync.WaitGroup
-	sem        chan struct{}
-	index, bad int
-	tried      map[string]bool
-	status     Status
+	mu          sync.Mutex
+	switchMu    sync.Mutex
+	ctx         context.Context
+	cancel      context.CancelFunc
+	opts        Options
+	config      Config
+	resolver    *Resolver
+	listener    net.Listener
+	child       *childProcess
+	conns       map[net.Conn]bool
+	wg          sync.WaitGroup
+	sem         chan struct{}
+	index, bad  int
+	tried       map[string]bool
+	status      Status
+	probeWake   chan struct{}
+	probeCancel context.CancelFunc
+	events      []diagnosticEvent
 }
 
 func Start(opts Options) (*Engine, error) {
@@ -75,7 +80,7 @@ func Start(opts Options) (*Engine, error) {
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	e := &Engine{opts: opts, config: cfg, ctx: ctx, cancel: cancel, conns: map[net.Conn]bool{}, sem: make(chan struct{}, 128), tried: map[string]bool{}}
+	e := &Engine{opts: opts, config: cfg, ctx: ctx, cancel: cancel, conns: map[net.Conn]bool{}, sem: make(chan struct{}, 128), tried: map[string]bool{}, probeWake: make(chan struct{}, 1)}
 	e.resolver = NewResolver(cfg.Fallback)
 	e.index = e.cachedIndex()
 	e.status = Status{State: "connecting", ConfigVersion: cfg.Version}
@@ -111,6 +116,11 @@ func Start(opts Options) (*Engine, error) {
 	}
 	e.wg.Add(1)
 	go e.accept()
+	if opts.AutoProbe {
+		e.wg.Add(1)
+		go e.probeLoop(e.probeYouTube)
+		e.wakeProbe()
+	}
 	if opts.RemoteURL != "" && opts.PublicKey != "" {
 		e.wg.Add(1)
 		go func() { defer e.wg.Done(); e.updateLoop() }()
@@ -196,7 +206,7 @@ func (e *Engine) handle(c net.Conn) {
 	ips, err := e.resolver.Resolve(e.ctx, host)
 	if err != nil {
 		io.WriteString(c, "HTTP/1.1 502 Bad Gateway\r\n\r\n")
-		e.noteError(id, "DoH недоступен")
+		e.noteError(id, host+": DoH недоступен")
 		e.failure(id, adaptive)
 		return
 	}
@@ -208,18 +218,18 @@ func (e *Engine) handle(c net.Conn) {
 	io.ReadFull(r, buffered)
 	hello, sni, err := ReadClientHello(io.MultiReader(strings.NewReader(string(buffered)), c))
 	if err != nil {
-		e.noteError(id, "ClientHello: "+err.Error())
+		e.noteError(id, host+": ClientHello: "+err.Error())
 		return
 	}
-	if sni != host {
-		e.noteError(id, "SNI не совпадает с CONNECT")
-		return
-	}
+	// CONNECT задаёт адрес назначения. ECH может использовать другое внешнее SNI;
+	// проверку сертификата и подлинности сервера выполняет сам браузер.
+	_ = sni
 	var upstream net.Conn
 	ctx, cancel := context.WithTimeout(e.ctx, 10*time.Second)
 	defer cancel()
 	e.mu.Lock()
 	p := e.child
+	id = e.status.StrategyID
 	e.mu.Unlock()
 	upstream, err = dialCandidates(ctx, ips, func(ctx context.Context, ip net.IP) (net.Conn, error) {
 		if target && !e.opts.Direct {
@@ -233,7 +243,7 @@ func (e *Engine) handle(c net.Conn) {
 	})
 	if upstream == nil || err != nil {
 		if err != nil {
-			e.noteError(id, "Соединение с сервером: "+err.Error())
+			e.noteError(id, host+": соединение с сервером: "+err.Error())
 		}
 		e.failure(id, adaptive)
 		return
@@ -265,14 +275,14 @@ func (e *Engine) handle(c net.Conn) {
 	default:
 	}
 	if bytes == 0 && readErr != nil {
-		e.noteError(id, "Нет ответа TLS: "+readErr.Error())
+		e.noteError(id, host+": нет ответа TLS: "+readErr.Error())
 	}
 	c.Close()
 	upstream.Close()
 	<-done
 	if adaptive && !clientCancelled && bytes < 1024 && readErr != nil {
 		e.failure(id, true)
-	} else if target && bytes >= 1024 {
+	} else if adaptive && bytes >= 1024 && !e.opts.AutoProbe {
 		e.mu.Lock()
 		if e.status.StrategyID == id && e.status.State != "blocked" {
 			e.status.State = "ready"
@@ -296,6 +306,7 @@ func (e *Engine) noteError(id, message string) {
 	defer e.mu.Unlock()
 	if e.status.StrategyID == id && e.status.State != "blocked" {
 		e.status.Error = message
+		e.eventLocked(id, message)
 	}
 }
 
@@ -319,7 +330,7 @@ func (e *Engine) copyDown(dst, src net.Conn, video bool, id string) (int64, floa
 			}
 			e.mu.Lock()
 			e.status.Total += int64(n)
-			if total >= 1024 && e.status.StrategyID == id && e.status.State != "blocked" {
+			if total >= 1024 && e.status.StrategyID == id && e.status.State != "blocked" && !e.opts.AutoProbe {
 				e.status.State = "ready"
 			}
 			if video && total >= 32768 && time.Since(start) > 300*time.Millisecond {
@@ -353,7 +364,10 @@ func (e *Engine) failure(id string, target bool) {
 		return
 	}
 	e.bad++
-	change := e.bad >= 2
+	change := e.bad >= 3
+	if e.opts.AutoProbe && !e.status.Verified {
+		change = false
+	}
 	e.mu.Unlock()
 	if change {
 		e.next(id)
@@ -382,6 +396,11 @@ func (e *Engine) next(expected string) {
 		e.mu.Unlock()
 		return
 	}
+	if e.probeCancel != nil {
+		e.probeCancel()
+		e.probeCancel = nil
+	}
+	e.status.Verified = false
 	next := -1
 	for i := range e.config.Strategies {
 		if !e.tried[e.config.Strategies[i].ID] {
@@ -421,6 +440,7 @@ func (e *Engine) next(expected string) {
 	e.status.Speed = 0
 	if err != nil {
 		e.status.Error = "Не удалось запустить стратегию"
+		e.eventLocked(s.ID, err.Error())
 	} else {
 		e.status.Error = ""
 	}
@@ -429,6 +449,9 @@ func (e *Engine) next(expected string) {
 	}
 	e.mu.Unlock()
 	old.stop()
+	if e.opts.AutoProbe {
+		e.wakeProbe()
+	}
 	if err != nil {
 		e.mu.Lock()
 		e.bad = 1

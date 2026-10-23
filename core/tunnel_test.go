@@ -162,12 +162,15 @@ func TestCONNECTTunnelEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	engine.opts.Direct = false
+	engine.opts.AutoProbe = true
 	engine.child = &childProcess{addr: socks.Addr().String()}
 	engine.resolver.cache["m.youtube.com"] = dnsEntry{[]net.IP{net.ParseIP("8.8.8.8")}, time.Now().Add(time.Minute)}
 	defer func() { engine.mu.Lock(); engine.child = nil; engine.mu.Unlock(); engine.Stop() }()
 	proxy, _ := url.Parse("http://" + engine.Address())
 	// Только локальный тестовый сервер имеет самоподписанный сертификат.
-	transport := &http.Transport{Proxy: http.ProxyURL(proxy), TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	// Внешнее SNI может отличаться от CONNECT при ECH. Туннель обязан
+	// сохранить байты, а сертификат проверяет клиент (здесь локальный fixture).
+	transport := &http.Transport{Proxy: http.ProxyURL(proxy), TLSClientConfig: &tls.Config{InsecureSkipVerify: true, ServerName: "www.youtube.com"}}
 	defer transport.CloseIdleConnections()
 	client := http.Client{Transport: transport, Timeout: 5 * time.Second}
 	response, err := client.Get("https://m.youtube.com/test")
@@ -178,6 +181,9 @@ func TestCONNECTTunnelEndToEnd(t *testing.T) {
 	body, err := io.ReadAll(response.Body)
 	if err != nil || len(body) != 5120 {
 		t.Fatalf("tunnel response: %d bytes, %v", len(body), err)
+	}
+	if engine.Snapshot().State == "ready" || engine.Snapshot().Verified {
+		t.Fatal("encrypted bytes bypassed the HTTP availability check")
 	}
 }
 

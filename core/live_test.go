@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/url"
@@ -15,11 +16,18 @@ func TestLiveProxy(t *testing.T) {
 	if executable == "" {
 		t.Skip("set RAZGON_LIVE_CIADPI for a live network test")
 	}
-	e, err := Start(Options{Executable: executable, FakePath: os.Getenv("RAZGON_LIVE_FAKE"), DataDir: t.TempDir()})
+	e, err := Start(Options{Executable: executable, FakePath: os.Getenv("RAZGON_LIVE_FAKE"), DataDir: t.TempDir(), AutoProbe: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer e.Stop()
+	deadline := time.Now().Add(60 * time.Second)
+	for !e.Snapshot().Verified && time.Now().Before(deadline) && e.Snapshot().State != "blocked" {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !e.Snapshot().Verified {
+		t.Fatal(e.Diagnostics())
+	}
 	p, _ := url.Parse("http://" + e.Address())
 	tr := &http.Transport{Proxy: http.ProxyURL(p)}
 	defer tr.CloseIdleConnections()
@@ -46,18 +54,36 @@ func TestLiveSignedUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := Start(Options{Executable: executable, FakePath: os.Getenv("RAZGON_LIVE_FAKE"), DataDir: t.TempDir(), PublicKey: string(pub), RemoteURL: "https://github.com/sonjiwu2/youtube-android-zapret/releases/download/strategies/strategies.json"})
+	e, err := Start(Options{Executable: executable, FakePath: os.Getenv("RAZGON_LIVE_FAKE"), DataDir: t.TempDir(), PublicKey: string(pub), RemoteURL: "https://raw.githubusercontent.com/sonjiwu2/youtube-android-zapret/main/updates/strategies.json"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer e.Stop()
+	base, _ := ParseConfig(BuiltinJSON)
 	deadline := time.Now().Add(45 * time.Second)
 	for time.Now().Before(deadline) {
-		if e.Snapshot().ConfigVersion > 1 {
+		if e.Snapshot().ConfigVersion > base.Version {
 			t.Log(e.StatusJSON())
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 	t.Fatal("signed remote update was not applied: " + e.StatusJSON())
+}
+
+func TestLivePresetsStart(t *testing.T) {
+	executable := os.Getenv("RAZGON_LIVE_CIADPI")
+	if executable == "" {
+		t.Skip("set RAZGON_LIVE_CIADPI")
+	}
+	cfg, _ := ParseConfig(BuiltinJSON)
+	for _, s := range cfg.Strategies {
+		t.Run(s.ID, func(t *testing.T) {
+			p, err := startChild(context.Background(), executable, os.Getenv("RAZGON_LIVE_FAKE"), s)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.stop()
+		})
+	}
 }

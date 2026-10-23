@@ -154,8 +154,67 @@ func (r *Resolver) query(ctx context.Context, p dohProvider, host string) ([]net
 }
 
 func (r *Resolver) queryType(ctx context.Context, p dohProvider, host, kind string) ([]net.IP, time.Duration, error) {
+	if r.dialBootstrap == nil {
+		return r.queryTypeRoute(ctx, p, host, kind, false)
+	}
+	// Доступ к DoH не должен зависеть исключительно от ещё не подобранной
+	// стратегии YouTube. Оба пути используют pinned IP и проверку сертификата.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	type result struct {
+		ips []net.IP
+		ttl time.Duration
+		err error
+	}
+	results := make(chan result, 2)
+	for _, direct := range []bool{false, true} {
+		go func(direct bool) {
+			if direct {
+				timer := time.NewTimer(200 * time.Millisecond)
+				defer timer.Stop()
+				select {
+				case <-timer.C:
+				case <-ctx.Done():
+					results <- result{err: ctx.Err()}
+					return
+				}
+			}
+			ips, ttl, err := r.queryTypeRoute(ctx, p, host, kind, direct)
+			results <- result{ips, ttl, err}
+		}(direct)
+	}
+	var last error
+	for range 2 {
+		select {
+		case a := <-results:
+			if len(a.ips) > 0 {
+				return a.ips, a.ttl, nil
+			}
+			last = a.err
+		case <-ctx.Done():
+			return nil, 0, ctx.Err()
+		}
+	}
+	return nil, 0, last
+}
+
+func (r *Resolver) prefer(host string, ip net.IP) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry := r.cache[host]
+	ips := []net.IP{append(net.IP(nil), ip...)}
+	for _, other := range entry.IPs {
+		if !ip.Equal(other) {
+			ips = append(ips, other)
+		}
+	}
+	entry.IPs = ips
+	r.cache[host] = entry
+}
+
+func (r *Resolver) queryTypeRoute(ctx context.Context, p dohProvider, host, kind string, direct bool) ([]net.IP, time.Duration, error) {
 	tr := &http.Transport{Proxy: nil, TLSClientConfig: &tls.Config{ServerName: p.Host, MinVersion: tls.VersionTLS12}, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		if r.dialBootstrap != nil {
+		if r.dialBootstrap != nil && !direct {
 			return r.dialBootstrap(ctx, p.IP)
 		}
 		return (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort(p.IP, "443"))

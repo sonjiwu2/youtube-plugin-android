@@ -14,10 +14,8 @@ try {
     & go run ./cmd/configsign -key $Key -file $output
     if ($LASTEXITCODE) { throw 'Подпись конфигурации не выполнена' }
 } finally { Pop-Location }
-& gh release view strategies --repo sonjiwu2/youtube-android-zapret *> $null
-if ($LASTEXITCODE -eq 0) {
-    & gh release upload strategies $output "$output.sig" --clobber --repo sonjiwu2/youtube-android-zapret
-} else {
-    & gh release create strategies $output "$output.sig" --target main --prerelease --title 'Подписанные стратегии Разгон' --notes 'Конфигурация Ed25519 для автоматического обновления приложения. APK находятся в релизах v*.' --repo sonjiwu2/youtube-android-zapret
-}
-if ($LASTEXITCODE) { throw 'Публикация конфигурации не выполнена' }
+$destination = Join-Path $root 'updates'
+New-Item -ItemType Directory -Force $destination | Out-Null
+Copy-Item -LiteralPath $output -Destination (Join-Path $destination 'strategies.json')
+Copy-Item -LiteralPath "$output.sig" -Destination (Join-Path $destination 'strategies.json.sig')
+Write-Output 'Подписанные обновления готовы в updates/. Закоммитьте оба файла и отправьте main на GitHub.'

@@ -9,10 +9,38 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net"
+	"os"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestPublishedConfigSignature(t *testing.T) {
+	data, err := os.ReadFile("../updates/strategies.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig, err := os.ReadFile("../updates/strategies.json.sig")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, err := os.ReadFile("../app/src/main/assets/config-public.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := ParseConfig(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiry, err := time.Parse(time.RFC3339, cfg.Expires)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, _ := ParseConfig(BuiltinJSON)
+	if _, err = VerifyConfig(data, sig, string(pub), base.Version, expiry.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestHostlist(t *testing.T) {
 	for _, tc := range []struct {
@@ -96,7 +124,7 @@ func TestSignature(t *testing.T) {
 	if _, err := VerifyConfig(append(data, ' '), sig, key, 1, time.Now()); err == nil {
 		t.Fatal("accepted tampering")
 	}
-	if _, err := VerifyConfig(data, sig, key, 2, time.Now()); err == nil {
+	if _, err := VerifyConfig(data, sig, key, c.Version+1, time.Now()); err == nil {
 		t.Fatal("accepted rollback")
 	}
 	if _, err := VerifyConfig(data, sig, key, 1, time.Now().Add(2*time.Hour)); err == nil {
@@ -160,6 +188,10 @@ func TestStrategySelection(t *testing.T) {
 		t.Fatal("switched after one failure")
 	}
 	e.failure(first, true)
+	if e.Snapshot().StrategyID != first {
+		t.Fatal("switched before three failures")
+	}
+	e.failure(first, true)
 	if e.Snapshot().StrategyID == first {
 		t.Fatal("did not switch")
 	}
@@ -167,7 +199,7 @@ func TestStrategySelection(t *testing.T) {
 	if e.bad != 0 {
 		t.Fatal("stale connection affected new strategy")
 	}
-	for i := 0; i < 12; i++ {
+	for i := 0; i <= len(e.config.Strategies); i++ {
 		e.Next()
 	}
 	if e.Snapshot().State != "blocked" {

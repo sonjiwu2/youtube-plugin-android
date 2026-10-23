@@ -3,16 +3,43 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os/exec"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 )
 
 type childProcess struct {
-	cmd  *exec.Cmd
-	done chan struct{}
-	addr string
+	cmd    *exec.Cmd
+	done   chan struct{}
+	addr   string
+	output *processOutput
+}
+
+type processOutput struct {
+	mu   sync.Mutex
+	tail string
+}
+
+func (o *processOutput) Write(b []byte) (int, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.tail += string(b)
+	if len(o.tail) > 2048 {
+		o.tail = o.tail[len(o.tail)-2048:]
+	}
+	return len(b), nil
+}
+func (o *processOutput) String() string {
+	if o == nil {
+		return ""
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return strings.TrimSpace(o.tail)
 }
 
 func startChild(ctx context.Context, executable, fake string, s Strategy) (*childProcess, error) {
@@ -30,10 +57,12 @@ func startChild(ctx context.Context, executable, fake string, s Strategy) (*chil
 		args = append(args, a)
 	}
 	cmd := exec.CommandContext(ctx, executable, args...)
+	output := &processOutput{}
+	cmd.Stderr = output
 	if err = cmd.Start(); err != nil {
 		return nil, err
 	}
-	child := &childProcess{cmd: cmd, done: make(chan struct{}), addr: net.JoinHostPort("127.0.0.1", strconv.Itoa(port))}
+	child := &childProcess{cmd: cmd, done: make(chan struct{}), addr: net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), output: output}
 	go func() { cmd.Wait(); close(child.done) }()
 	timeout := time.NewTimer(3 * time.Second)
 	defer timeout.Stop()
@@ -45,7 +74,7 @@ func startChild(ctx context.Context, executable, fake string, s Strategy) (*chil
 			child.stop()
 			return nil, ctx.Err()
 		case <-child.done:
-			return nil, errors.New("ciadpi exited during startup")
+			return nil, fmt.Errorf("ciadpi exited during startup: %s", output.String())
 		case <-timeout.C:
 			child.stop()
 			return nil, errors.New("ciadpi startup timeout")

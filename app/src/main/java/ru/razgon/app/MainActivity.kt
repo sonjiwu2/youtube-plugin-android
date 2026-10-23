@@ -57,6 +57,7 @@ class MainActivity : ComponentActivity() {
     private var ready by mutableStateOf(false)
     private var loading by mutableStateOf(true)
     private var pageError by mutableStateOf("")
+    private var lastBrowserError = ""
     private var showInfo by mutableStateOf(false)
     private var inPip by mutableStateOf(false)
     private var fullScreen by mutableStateOf(false)
@@ -113,7 +114,7 @@ class MainActivity : ComponentActivity() {
                 try {
                     controller.start(profile.key)
                     if (!started || token != generation) { controller.stop(); return@withLock }
-                    ready = true; loading = true; observedStrategy = ""; strategySince = System.currentTimeMillis()
+                    ready = false; loading = true; observedStrategy = ""; strategySince = System.currentTimeMillis()
                     poll(token)
                 } catch (error: Exception) {
                     status = EngineStatus(state = "error", error = error.message ?: "Не удалось запустить движок")
@@ -126,22 +127,24 @@ class MainActivity : ComponentActivity() {
             while (started && generation == token) {
                 val next = controller.status()
                 if (generation != token) break
+                if (retryPending) { delay(200); continue }
                 if (BuildConfig.DEBUG && next.error.isNotEmpty() && next.error != status.error)
                     android.util.Log.d("RazgonEngine", next.error)
                 status = next
-                if (next.state == "blocked") { ready = false; destroyBrowser() }
-                else if (next.strategyId != observedStrategy) {
-                    val changed = observedStrategy.isNotEmpty()
+                if (next.strategyId != observedStrategy) {
                     observedStrategy = next.strategyId; strategySince = System.currentTimeMillis()
-                    if (changed) { pageError = ""; webView?.reload() }
-                } else if (loading && next.state != "ready" && System.currentTimeMillis() - strategySince > 30_000 && !retryPending) nextStrategy()
+                    ready = false; destroyBrowser(); pageError = ""; loading = true
+                }
+                if (next.verified && next.state != "blocked") ready = true
+                else { ready = false; if (webView != null) destroyBrowser() }
                 updateNotification(); delay(1_000)
             }
         }
     }
     private fun nextStrategy() {
-        if (!ready || retryPending) return
+        if (retryPending || status.state in listOf("starting", "stopped", "offline", "error", "blocked")) return
         retryPending = true
+        ready = false; destroyBrowser()
         lifecycleScope.launch {
             try { controller.next(); pageError = ""; loading = true; strategySince = System.currentTimeMillis() }
             finally { retryPending = false }
@@ -182,9 +185,13 @@ class MainActivity : ComponentActivity() {
             override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) { loading = true }
             override fun onPageFinished(view: WebView, url: String?) { loading = false; if (pageError.isEmpty()) CookieManager.getInstance().flush() }
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-                if (request.isForMainFrame && started && ready) {
+                if (request.isForMainFrame && started && ready && view === webView) {
+                    val failedStrategy = observedStrategy
+                    lastBrowserError = "WebView ${error.errorCode}: ${error.description} · ${request.url.host}"
+                    // Chromium иначе рисует собственную страницу ошибки поверх Compose.
+                    view.visibility = View.INVISIBLE
                     loading = false; pageError = "Страница не загрузилась. Проверяем следующую стратегию…"
-                    lifecycleScope.launch { delay(1_500); if (started && pageError.isNotEmpty()) nextStrategy() }
+                    lifecycleScope.launch { delay(1_500); if (started && view === webView && observedStrategy == failedStrategy && pageError.isNotEmpty()) nextStrategy() }
                 }
             }
             override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
@@ -225,6 +232,17 @@ class MainActivity : ComponentActivity() {
     }
     private fun cancelNotification() = getSystemService(NotificationManager::class.java).cancel(42)
 
+    private fun shareDiagnostics() {
+        lifecycleScope.launch {
+            val web = webViewPackage()
+            val report = "Разгон ${BuildConfig.VERSION_NAME}\nAndroid ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})\n${Build.MANUFACTURER} ${Build.MODEL}\nWebView: $web\nСеть: ${profile.label}\n$lastBrowserError\n${controller.diagnostics()}"
+            startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"; putExtra(Intent.EXTRA_TEXT, report)
+            }, "Отчёт о подключении"))
+        }
+    }
+    private fun webViewPackage(): String = androidx.webkit.WebViewCompat.getCurrentWebViewPackage(this)?.let { "${it.packageName} ${it.versionName}" } ?: "неизвестно"
+
     @Composable private fun App() {
         val scheme = if (isSystemInDarkTheme()) darkColorScheme(primary = Color(0xFFB5F768), primaryContainer = Color(0xFF2E4221), onPrimaryContainer = Color(0xFFE0F2D0), background = Color(0xFF101410), surface = Color(0xFF171D17))
             else lightColorScheme(primary = Color(0xFF315F17), primaryContainer = Color(0xFFE0EBCF), onPrimaryContainer = Color(0xFF142309), background = Color(0xFFF4F6EF), surface = Color.White)
@@ -261,7 +279,7 @@ class MainActivity : ComponentActivity() {
                     if (!inPip && !fullScreen) Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
                         TextButton(onClick = { pageError = ""; webView?.loadUrl(HOME) }, enabled = ready) { Text("Главная") }
                         TextButton(onClick = { if (ready) { pageError = ""; webView?.reload() } else restart() }) { Text("Обновить") }
-                        TextButton(onClick = { nextStrategy() }, enabled = ready) { Text("Стратегия") }
+                        TextButton(onClick = { nextStrategy() }, enabled = status.strategyId.isNotEmpty() && status.state != "blocked" && !retryPending) { Text("Стратегия") }
                         if (Build.VERSION.SDK_INT >= 26) TextButton(onClick = { enterPip() }, enabled = ready) { Text("В окне") }
                     }
                 }
@@ -291,8 +309,9 @@ class MainActivity : ComponentActivity() {
                 Spacer(Modifier.height(20.dp))
                 Text(when (status.state) { "blocked" -> "В вашей сети обход сейчас недоступен"; "offline" -> "Вы не в сети"; "error" -> "Не удалось подключиться"; else -> if (pageError.isNotEmpty()) "Проверяем подключение" else "Готовим подключение" }, style = MaterialTheme.typography.headlineSmall)
                 Spacer(Modifier.height(12.dp))
-                Text(when (status.state) { "blocked" -> "Проверены все доступные стратегии. Возможна блокировка по IP или белый список. Попробуйте другую сеть или повторите позже."; "offline" -> "Подключитесь к Wi-Fi или мобильной сети. Приложение продолжит автоматически."; "error" -> status.error; else -> pageError.ifEmpty { "Подбираем стратегию. Обычно это занимает несколько секунд." } })
+                Text(when (status.state) { "blocked" -> "YouTube не ответил ни с одной стратегией. Сохраните отчёт о подключении — он поможет найти причину."; "offline" -> "Подключитесь к Wi-Fi или мобильной сети. Приложение продолжит автоматически."; "error" -> status.error; else -> pageError.ifEmpty { "Проверяем настоящий ответ YouTube. Попытка ${status.attempts.coerceAtLeast(1)}. В сложной сети подбор может занять несколько минут." } })
                 if (isError) { Spacer(Modifier.height(20.dp)); Button(onClick = { restart() }) { Text("Повторить") } }
+                TextButton(onClick = { shareDiagnostics() }) { Text("Поделиться отчётом") }
             }
         }
     }
@@ -300,6 +319,7 @@ class MainActivity : ComponentActivity() {
         AlertDialog(onDismissRequest = { showInfo = false }, title = { Text("Разгон · ${BuildConfig.VERSION_NAME}") }, text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 Text("Трафик: ${String.format(Locale.US, "%.1f", status.bytes / 1048576.0)} МБ\nСтратегий проверено: ${status.attempts}\n${status.update}")
+                TextButton(onClick = { shareDiagnostics() }) { Text("Поделиться отчётом о подключении") }
                 Spacer(Modifier.height(16.dp)); Text("Индикатор показывает скорость первых чанков видео. Для сравнения «до / после» запустите видео и нажмите кнопку ниже. Замер загрузит два небольших фрагмента: напрямую и с Разгоном.")
                 Button(onClick = {
                     measuring = true
