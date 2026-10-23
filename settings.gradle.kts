@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "YoutubePlugin"
 include(":app")
+include(":qa:probe")

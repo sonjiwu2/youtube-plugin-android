@@ -98,6 +98,49 @@ func TestTunnelDNSAndDescriptorOwnership(t *testing.T) {
 		}
 		break
 	}
+	// An unsupported/private upstream must be rejected before SYN-ACK. Otherwise
+	// the application believes an unusable route connected successfully.
+	syn := make([]byte, 40)
+	copy(syn[:20], packet[:20])
+	syn[9] = 6
+	binary.BigEndian.PutUint16(syn[2:4], 40)
+	syn[10], syn[11] = 0, 0
+	binary.BigEndian.PutUint16(syn[20:22], 31001)
+	binary.BigEndian.PutUint16(syn[22:24], 443)
+	binary.BigEndian.PutUint32(syn[24:28], 12345)
+	syn[32], syn[33] = 0x50, 0x02
+	binary.BigEndian.PutUint16(syn[34:36], 65535)
+	checksum := func(b []byte) uint16 {
+		var sum uint32
+		for i := 0; i < len(b); i += 2 {
+			sum += uint32(binary.BigEndian.Uint16(b[i:]))
+		}
+		for sum > 65535 {
+			sum = (sum & 65535) + (sum >> 16)
+		}
+		return ^uint16(sum)
+	}
+	pseudo := append(append([]byte{}, syn[12:20]...), 0, 6, 0, 20)
+	binary.BigEndian.PutUint16(syn[36:38], checksum(append(pseudo, syn[20:]...)))
+	binary.BigEndian.PutUint16(syn[10:12], checksum(syn[:20]))
+	if _, err := unix.Write(fd[1], syn); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(3 * time.Second)
+	for {
+		n, err := unix.Read(fd[1], buf)
+		if err == unix.EAGAIN && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n < 40 || buf[9] != 6 || buf[33]&4 == 0 {
+			t.Fatalf("expected TCP reset before SYN-ACK, got %x", buf[:n])
+		}
+		break
+	}
 	tunnel.stop()
 	if _, err := unix.FcntlInt(uintptr(fd[0]), unix.F_GETFD, 0); err != nil {
 		t.Fatalf("closed caller FD: %v", err)

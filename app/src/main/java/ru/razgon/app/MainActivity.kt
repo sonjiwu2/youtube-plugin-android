@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
@@ -117,6 +118,12 @@ class MainActivity : ComponentActivity() {
     }
     @Composable private fun Dashboard() {
         val dark = when (config.theme) { "dark" -> true; "light" -> false; else -> isSystemInDarkTheme() }
+        SideEffect {
+            WindowCompat.getInsetsController(window, window.decorView).apply {
+                isAppearanceLightStatusBars = !dark
+                isAppearanceLightNavigationBars = !dark
+            }
+        }
         val scheme = if (dark) darkColorScheme(primary = Color(0xFFAAA5FF), onPrimary = Color(0xFF201A70),
             primaryContainer = Color(0xFF2D2A51), background = Color(0xFF101117), surface = Color(0xFF1B1D27),
             surfaceVariant = Color(0xFF252735), onSurface = Color(0xFFF3F2FA), onSurfaceVariant = Color(0xFFAAAABA), outlineVariant = Color(0xFF30323E))
@@ -173,7 +180,7 @@ class MainActivity : ComponentActivity() {
                             Text("Локальный VPN обрабатывает трафик YouTube на телефоне. Внешнего сервера нет, IP остаётся прежним. HTTPS проверяет и расшифровывает сам YouTube.")
                             Spacer(Modifier.height(12.dp))
                             Text("Подключение сохраняется после закрытия этого экрана. Принудительная остановка Android, отзыв разрешения или другой VPN отключают сервис. Результат обхода зависит от оператора.")
-                            TextButton(onClick = { shareDiagnostics() }) { Text("Поделиться отчётом") }
+                            TextButton(onClick = { dialog = "diagnostics" }) { Text("Диагностика подключения") }
                             TextButton(onClick = { launch(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/sonjiwu2/youtube-plugin-android"))) }) { Text("Репозиторий на GitHub") }
                             TextButton(onClick = {
                                 lifecycleScope.launch {
@@ -184,6 +191,9 @@ class MainActivity : ComponentActivity() {
                         }
                     }, confirmButton = { TextButton(onClick = { dialog = "" }) { Text("Закрыть") } })
                     "licenses" -> AlertDialog(onDismissRequest = { dialog = "" }, title = { Text("Лицензии") }, text = { Text(licenseText, Modifier.verticalScroll(rememberScrollState()), fontSize = 12.sp) }, confirmButton = { TextButton(onClick = { dialog = "" }) { Text("Закрыть") } })
+                    "diagnostics" -> AlertDialog(onDismissRequest = { dialog = "" }, title = { Text("Диагностика") }, text = {
+                        Text(PluginState.diagnostics, Modifier.verticalScroll(rememberScrollState()), fontSize = 11.sp)
+                    }, confirmButton = { TextButton(onClick = { shareDiagnostics() }) { Text("Поделиться") } }, dismissButton = { TextButton(onClick = { dialog = "" }) { Text("Закрыть") } })
                 }
                 if (message.isNotEmpty()) AlertDialog(onDismissRequest = { message = "" }, title = { Text("Youtube Plugin") }, text = { Text(message) }, confirmButton = { TextButton(onClick = { message = "" }) { Text("Понятно") } })
             }
@@ -200,7 +210,7 @@ class MainActivity : ComponentActivity() {
                         Spacer(Modifier.height(5.dp))
                         Text(if (state.state == "ready" && config.enabled) "Трафик YouTube · HTTPS" else stateText(if (config.enabled && state.state == "stopped") "starting" else state.state), color = colors.onSurfaceVariant, fontSize = 13.sp)
                     }
-                    Switch(checked = config.enabled, onCheckedChange = { if (it) requestEnable() else PluginVpnService.disable(this@MainActivity) }, modifier = Modifier.semantics { contentDescription = "Подключение YouTube" })
+                    Switch(checked = config.enabled, onCheckedChange = { if (it) requestEnable() else PluginVpnService.disable(this@MainActivity) }, colors = SwitchDefaults.colors(checkedThumbColor = Color.White), modifier = Modifier.semantics { contentDescription = "Подключение YouTube" })
                 }
                 if (state.error.isNotEmpty() && config.enabled) {
                     Spacer(Modifier.height(12.dp))
@@ -265,7 +275,7 @@ private fun themeName(value: String) = when (value) { "dark" -> "Тёмное"; 
             if (subtitle.isNotEmpty()) { Spacer(Modifier.height(3.dp)); Text(subtitle, color = colors.onSurfaceVariant, fontSize = 11.sp, lineHeight = 15.sp) }
         }
         Spacer(Modifier.width(8.dp))
-        if (checked != null) Switch(checked, onCheckedChange = onToggle, modifier = Modifier.semantics { contentDescription = title })
+        if (checked != null) Switch(checked, onCheckedChange = onToggle, colors = SwitchDefaults.colors(checkedThumbColor = Color.White), modifier = Modifier.semantics { contentDescription = title })
         else {
             if (value.isNotEmpty()) Text(value, fontSize = 11.sp, color = colors.onSurfaceVariant, modifier = Modifier.widthIn(max = 100.dp))
             Spacer(Modifier.width(4.dp)); Glyph("chevron", 16, colors.onSurfaceVariant)

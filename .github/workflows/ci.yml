@@ -44,7 +44,7 @@ jobs:
       - name: ciadpi и Go AAR
         run: bash scripts/build-engine.sh
       - name: Debug, тесты и lint
-        run: bash gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
+        run: bash gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug :qa:probe:assembleDebug
       - uses: actions/upload-artifact@v4
         with:
           name: debug-apk

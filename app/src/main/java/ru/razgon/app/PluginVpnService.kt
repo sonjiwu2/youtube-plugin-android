@@ -79,7 +79,12 @@ class PluginVpnService : VpnService() {
                 .addAddress("10.77.0.2", 24).addAddress("fd77:7974:7000::2", 64)
                 .addRoute("0.0.0.0", 0).addRoute("::", 0).addDnsServer("10.77.0.1")
                 .addAllowedApplication(YOUTUBE).setBlocking(false)
-                .setConfigureIntent(openIntent()).apply { if (Build.VERSION.SDK_INT >= 29) setMetered(false) }
+                .setConfigureIntent(openIntent()).apply {
+                    if (Build.VERSION.SDK_INT >= 29) setMetered(false)
+                    // The separate test UID exercises the exact same TUN path.
+                    // It cannot enter the production allowlist.
+                    if (BuildConfig.DEBUG && runCatching { packageManager.getApplicationInfo("ru.youtubeplugin.probe", 0) }.isSuccess) addAllowedApplication("ru.youtubeplugin.probe")
+                }
                 .establish() ?: error("Не удалось создать VPN-интерфейс. Проверьте разрешение Android")
             PluginState.strategies.value = withContext(Dispatchers.IO) { controller.strategies() }
             while (currentCoroutineContext().isActive && settings.read().enabled) {
@@ -123,6 +128,7 @@ class PluginVpnService : VpnService() {
                     state = engineStatus.state; error = engineStatus.error
                     if (state == "ready") retryDelay = 15_000
                     PluginState.diagnostics = withContext(Dispatchers.IO) { controller.diagnostics() }
+                    if (BuildConfig.DEBUG) withContext(Dispatchers.IO) { java.io.File(cacheDir, "vpn-diagnostics.json").writeText(PluginState.diagnostics) }
                     if (state == "blocked" && config.reconnect) {
                         baseDown += engineStatus.downloaded; baseUp += engineStatus.uploaded
                         withContext(NonCancellable + Dispatchers.IO) { controller.stop() }
