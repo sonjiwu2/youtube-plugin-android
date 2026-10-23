@@ -33,6 +33,11 @@ go.work.sum
 *-sources.jar
 /app/libs/
 /native/out/
+/native/*.exe
+/dist/
+/signing/*.json
+/signing/*.sig
+/signing/*-notes.md
 /app/src/main/jniLibs/
 
 # --- Ключи и секреты: приватный ключ подписи стратегий и keystore не храним в репозитории ---
@@ -59,3 +64,5 @@ plan*.md
 .skill-cache/
 tmp/
 scratch/
+tmp-*.log
+/native/byedpi/.github/
