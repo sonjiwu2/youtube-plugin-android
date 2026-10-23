@@ -41,7 +41,7 @@ class EngineController(private val context: Context) {
             }
             setProxy(port.toInt())
         } catch (error: Exception) {
-            withContext(Dispatchers.IO) { next.stop() }
+            withContext(NonCancellable + Dispatchers.IO) { next.stop() }
             engine = null
             throw error
         }
