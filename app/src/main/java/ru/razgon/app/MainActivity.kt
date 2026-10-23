@@ -29,6 +29,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -158,7 +159,9 @@ class MainActivity : ComponentActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     private fun createBrowser(): WebView = WebView(this).apply {
         webView = this
-        setBackgroundColor(android.graphics.Color.BLACK)
+        val night = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
+        setBackgroundColor(if (night) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
+        clipToOutline = true
         settings.apply {
             javaScriptEnabled = true; domStorageEnabled = true; allowFileAccess = false; allowContentAccess = false
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW; mediaPlaybackRequiresUserGesture = true
@@ -251,7 +254,7 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     Box(Modifier.weight(1f).fillMaxWidth()) {
-                        if (ready) AndroidView(factory = { createBrowser() }, modifier = Modifier.fillMaxSize())
+                        if (ready) AndroidView(factory = { createBrowser() }, modifier = Modifier.fillMaxSize().clipToBounds())
                         if (!ready || pageError.isNotEmpty()) ErrorOrLoading()
                         if (ready && loading && pageError.isEmpty()) LinearProgressIndicator(Modifier.fillMaxWidth())
                     }
