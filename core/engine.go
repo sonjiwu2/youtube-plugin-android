@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -23,6 +24,7 @@ type Options struct {
 	Executable, FakePath, DataDir, Profile, RemoteURL, PublicKey string
 	Direct                                                       bool
 	AutoProbe                                                    bool
+	ParentWatch                                                  bool
 	Strategy, DNS                                                string
 }
 type Status struct {
@@ -104,7 +106,7 @@ func Start(opts Options) (*Engine, error) {
 	}
 	e.status = Status{State: "connecting", ConfigVersion: cfg.Version}
 	if !opts.Direct {
-		e.child, err = startChild(ctx, opts.Executable, opts.FakePath, cfg.Strategies[e.index])
+		e.child, err = startChild(ctx, opts.Executable, opts.FakePath, cfg.Strategies[e.index], opts.ParentWatch)
 		if err != nil {
 			cancel()
 			return nil, err
@@ -147,8 +149,22 @@ func Start(opts Options) (*Engine, error) {
 	return e, nil
 }
 
-func (e *Engine) Address() string    { return e.listener.Addr().String() }
-func (e *Engine) Snapshot() Status   { e.mu.Lock(); defer e.mu.Unlock(); return e.status }
+func (e *Engine) Address() string { return e.listener.Addr().String() }
+func (e *Engine) Snapshot() Status {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.child != nil && e.status.State != "stopped" && e.status.State != "blocked" {
+		select {
+		case <-e.child.done:
+			e.status.State = "blocked"
+			e.status.Verified = false
+			e.status.Error = "Сетевой движок завершился. Подключение нужно восстановить."
+			e.eventLocked(e.status.StrategyID, e.status.Error)
+		default:
+		}
+	}
+	return e.status
+}
 func (e *Engine) StatusJSON() string { b, _ := json.Marshal(e.Snapshot()); return string(b) }
 func (e *Engine) Stop() {
 	e.cancel()
@@ -257,19 +273,27 @@ func (e *Engine) forwardTLS(c net.Conn, host string, ips []net.IP, hello []byte,
 	p := e.child
 	id = e.status.StrategyID
 	e.mu.Unlock()
-	upstream, err = dialCandidates(ctx, ips, func(ctx context.Context, ip net.IP) (net.Conn, error) {
-		if target && !e.opts.Direct {
-			if p == nil {
-				return nil, errors.New("ciadpi unavailable")
-			}
-			return dialSOCKS(ctx, p.addr, ip, 443)
-		} else {
-			return (&net.Dialer{Timeout: 4 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort(ip.String(), "443"))
+	if prepared, ok := c.(preparedStream); ok {
+		var preparedID string
+		upstream, preparedID = prepared.VPNUpstream()
+		if preparedID != id {
+			return
 		}
-	})
+	} else {
+		upstream, err = dialCandidates(ctx, ips, func(ctx context.Context, ip net.IP) (net.Conn, error) {
+			if target && !e.opts.Direct {
+				if p == nil {
+					return nil, errors.New("ciadpi unavailable")
+				}
+				return dialSOCKS(ctx, p.addr, ip, 443)
+			} else {
+				return (&net.Dialer{Timeout: 4 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort(ip.String(), "443"))
+			}
+		})
+	}
 	if upstream == nil || err != nil {
 		if err != nil {
-			e.noteError(id, host+": соединение с сервером: "+err.Error())
+			e.noteError(id, host+": соединение с сервером: "+err.Error()+"; IP: "+fmt.Sprint(ips))
 		}
 		e.failure(id, adaptive)
 		return
@@ -349,7 +373,9 @@ func (e *Engine) noteError(id, message string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.status.StrategyID == id && e.status.State != "blocked" {
-		e.status.Error = message
+		if e.status.State != "ready" {
+			e.status.Error = message
+		}
 		e.eventLocked(id, message)
 	}
 }
@@ -427,6 +453,7 @@ func (e *Engine) sample(id string, speed float64) {
 	if id == e.status.StrategyID {
 		e.bad = 0
 		e.status.State = "ready"
+		e.status.Error = ""
 		e.saveStrategyLocked(id)
 	}
 }
@@ -478,7 +505,7 @@ func (e *Engine) next(expected string) {
 	var p *childProcess
 	var err error
 	if !e.opts.Direct {
-		p, err = startChild(e.ctx, e.opts.Executable, e.opts.FakePath, s)
+		p, err = startChild(e.ctx, e.opts.Executable, e.opts.FakePath, s, e.opts.ParentWatch)
 	}
 	e.mu.Lock()
 	old := e.child

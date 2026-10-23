@@ -16,8 +16,10 @@ import (
 	"github.com/xjasonlyu/tun2socks/v2/core/device"
 	"github.com/xjasonlyu/tun2socks/v2/core/device/fdbased"
 	"golang.org/x/sys/unix"
+	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/adapters/gonet"
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
+	"gvisor.dev/gvisor/pkg/tcpip/transport/tcp"
 	"gvisor.dev/gvisor/pkg/tcpip/transport/udp"
 	"gvisor.dev/gvisor/pkg/waiter"
 )
@@ -26,6 +28,7 @@ type vpnTunnel struct {
 	device device.Device
 	stack  *stack.Stack
 	cancel context.CancelFunc
+	ctx    context.Context
 	mu     sync.Mutex
 	closed bool
 	conns  map[net.Conn]bool
@@ -49,8 +52,8 @@ func startTunnel(fd int, engine *core.Engine) (*vpnTunnel, error) {
 		unix.Close(dup)
 		return nil, err
 	}
-	_, cancel := context.WithCancel(context.Background())
-	t := &vpnTunnel{device: dev, engine: engine, cancel: cancel, conns: map[net.Conn]bool{}, sem: make(chan struct{}, 64)}
+	ctx, cancel := context.WithCancel(context.Background())
+	t := &vpnTunnel{device: dev, engine: engine, ctx: ctx, cancel: cancel, conns: map[net.Conn]bool{}, sem: make(chan struct{}, 128)}
 	link := &deferredLink{LinkEndpoint: dev}
 	s, err := netstack.CreateStack(&netstack.Config{LinkEndpoint: link, TransportHandler: t})
 	if err != nil {
@@ -59,6 +62,59 @@ func startTunnel(fd int, engine *core.Engine) (*vpnTunnel, error) {
 		return nil, err
 	}
 	t.stack = s
+	tcpForwarder := tcp.NewForwarder(s, 0, 256, func(r *tcp.ForwarderRequest) {
+		t.mu.Lock()
+		if t.closed {
+			t.mu.Unlock()
+			r.Complete(true)
+			return
+		}
+		select {
+		case t.sem <- struct{}{}:
+		default:
+			t.mu.Unlock()
+			r.Complete(true)
+			return
+		}
+		t.wg.Add(1)
+		t.mu.Unlock()
+		go func() {
+			defer t.wg.Done()
+			defer func() { <-t.sem }()
+			id := r.ID()
+			ip := net.IP(id.LocalAddress.AsSlice())
+			upstream, strategy, err := engine.PrepareTCP(t.ctx, ip, id.LocalPort)
+			if err != nil {
+				r.Complete(true)
+				return
+			}
+			if upstream != nil {
+				defer upstream.Close()
+			}
+			var queue waiter.Queue
+			endpoint, failure := r.CreateEndpoint(&queue)
+			if failure != nil {
+				r.Complete(true)
+				return
+			}
+			r.Complete(false)
+			endpoint.SocketOptions().SetKeepAlive(true)
+			idle := tcpip.KeepaliveIdleOption(60 * time.Second)
+			endpoint.SetSockOpt(&idle)
+			conn := &preparedTCP{TCPConn: gonet.NewTCPConn(&queue, endpoint), upstream: upstream, strategy: strategy}
+			defer conn.Close()
+			t.mu.Lock()
+			if t.closed {
+				t.mu.Unlock()
+				return
+			}
+			t.conns[conn] = true
+			t.mu.Unlock()
+			defer func() { t.mu.Lock(); delete(t.conns, conn); t.mu.Unlock() }()
+			engine.ServeTCP(conn, ip, id.LocalPort)
+		}()
+	})
+	s.SetTransportProtocolHandler(tcp.ProtocolNumber, tcpForwarder.HandlePacket)
 	// Return unhandled for QUIC so netstack emits ICMP port-unreachable. Merely
 	// dropping UDP makes clients wait through QUIC timeouts before trying TCP.
 	dnsForwarder := udp.NewForwarder(s, func(r *udp.ForwarderRequest) bool {
@@ -78,6 +134,20 @@ func startTunnel(fd int, engine *core.Engine) (*vpnTunnel, error) {
 	})
 	link.start()
 	return t, nil
+}
+
+type preparedTCP struct {
+	*gonet.TCPConn
+	upstream net.Conn
+	strategy string
+}
+
+func (c *preparedTCP) VPNUpstream() (net.Conn, string) { return c.upstream, c.strategy }
+func (c *preparedTCP) Close() error {
+	if c.upstream != nil {
+		c.upstream.Close()
+	}
+	return c.TCPConn.Close()
 }
 
 // Protocol handlers must be completely initialized before the descriptor's

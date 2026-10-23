@@ -78,6 +78,26 @@ func TestTunnelDNSAndDescriptorOwnership(t *testing.T) {
 		}
 		break
 	}
+	// QUIC must receive an immediate ICMP error instead of timing out silently.
+	binary.BigEndian.PutUint16(packet[22:24], 443)
+	if _, err := unix.Write(fd[1], packet); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(3 * time.Second)
+	for {
+		n, err := unix.Read(fd[1], buf)
+		if err == unix.EAGAIN && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n < 28 || buf[9] != 1 || buf[20] != 3 || buf[21] != 3 {
+			t.Fatalf("expected ICMP port-unreachable, got %x", buf[:n])
+		}
+		break
+	}
 	tunnel.stop()
 	if _, err := unix.FcntlInt(uintptr(fd[0]), unix.F_GETFD, 0); err != nil {
 		t.Fatalf("closed caller FD: %v", err)

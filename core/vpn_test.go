@@ -97,3 +97,16 @@ func TestVPNSettingsValidation(t *testing.T) {
 		t.Fatal("manual choice silently switched")
 	}
 }
+
+func TestSnapshotDetectsExitedEngine(t *testing.T) {
+	done := make(chan struct{})
+	close(done)
+	e := &Engine{child: &childProcess{done: done}, status: Status{State: "ready", Verified: true}}
+	if s := e.Snapshot(); s.State != "blocked" || s.Verified || s.Error == "" {
+		t.Fatalf("%+v", s)
+	}
+	e.Snapshot()
+	if len(e.events) != 1 {
+		t.Fatal("repeated death event")
+	}
+}

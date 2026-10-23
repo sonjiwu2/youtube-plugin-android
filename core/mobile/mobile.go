@@ -21,7 +21,7 @@ func (e *Engine) Start(executable, fakePath, dataDir, profile, remoteURL, public
 	if e.inner != nil {
 		return 0, errors.New("engine already running")
 	}
-	inner, err := core.Start(core.Options{Executable: executable, FakePath: fakePath, DataDir: dataDir, Profile: profile, RemoteURL: remoteURL, PublicKey: publicKey, AutoProbe: true})
+	inner, err := core.Start(core.Options{Executable: executable, FakePath: fakePath, DataDir: dataDir, Profile: profile, RemoteURL: remoteURL, PublicKey: publicKey, AutoProbe: true, ParentWatch: true})
 	if err != nil {
 		return 0, err
 	}
@@ -32,9 +32,9 @@ func (e *Engine) Stop() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.inner != nil {
+		e.inner.Stop()
 		e.tunnel.stop()
 		e.tunnel = nil
-		e.inner.Stop()
 		e.inner = nil
 	}
 }
@@ -45,7 +45,7 @@ func (e *Engine) StartVPN(fd int, executable, fakePath, dataDir, profile, remote
 	if e.inner != nil {
 		return errors.New("engine already running")
 	}
-	inner, err := core.Start(core.Options{Executable: executable, FakePath: fakePath, DataDir: dataDir, Profile: profile, RemoteURL: remoteURL, PublicKey: publicKey, AutoProbe: true, Strategy: strategy, DNS: dns})
+	inner, err := core.Start(core.Options{Executable: executable, FakePath: fakePath, DataDir: dataDir, Profile: profile, RemoteURL: remoteURL, PublicKey: publicKey, AutoProbe: true, Strategy: strategy, DNS: dns, ParentWatch: true})
 	if err != nil {
 		return err
 	}

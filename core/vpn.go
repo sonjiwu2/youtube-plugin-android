@@ -4,12 +4,47 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
+	"strconv"
 	"time"
 
 	"golang.org/x/net/dns/dnsmessage"
 )
+
+// PrepareTCP connects upstream before the TUN stack acknowledges the client's
+// SYN. A broken IPv6 route then produces a TCP reset, allowing the application's
+// own Happy Eyeballs to select IPv4 instead of seeing a false successful dial.
+func (e *Engine) PrepareTCP(parent context.Context, destination net.IP, port uint16) (net.Conn, string, error) {
+	if port == 53 {
+		return nil, "", nil
+	}
+	if !publicIP(destination) || port != 80 && port != 443 {
+		return nil, "", errors.New("unsupported VPN destination")
+	}
+	ctx, cancel := context.WithTimeout(parent, 7*time.Second)
+	defer cancel()
+	stop := context.AfterFunc(e.ctx, cancel)
+	defer stop()
+	e.mu.Lock()
+	child, id, blocked := e.child, e.status.StrategyID, e.status.State == "blocked"
+	e.mu.Unlock()
+	if blocked || e.ctx.Err() != nil {
+		return nil, id, errors.New("engine unavailable")
+	}
+	if port == 443 && !e.opts.Direct {
+		if child == nil {
+			return nil, id, errors.New("ciadpi unavailable")
+		}
+		c, err := dialSOCKS(ctx, child.addr, destination, port)
+		return c, id, err
+	}
+	c, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(destination.String(), strconv.Itoa(int(port))))
+	return c, id, err
+}
+
+type preparedStream interface{ VPNUpstream() (net.Conn, string) }
 
 // ServeTCP accepts only connections from the platform's per-app VPN. Outbound
 // sockets belong to the plugin UID, which must never be included in that VPN.
@@ -42,7 +77,13 @@ func (e *Engine) ServeTCP(c net.Conn, destination net.IP, port uint16) {
 	if port == 80 {
 		ctx, cancel := context.WithTimeout(e.ctx, 5*time.Second)
 		defer cancel()
-		up, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(destination.String(), "80"))
+		var up net.Conn
+		var err error
+		if prepared, ok := c.(preparedStream); ok {
+			up, _ = prepared.VPNUpstream()
+		} else {
+			up, err = (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(destination.String(), "80"))
+		}
 		if err != nil {
 			return
 		}

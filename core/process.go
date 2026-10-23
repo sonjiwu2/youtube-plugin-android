@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -42,7 +43,7 @@ func (o *processOutput) String() string {
 	return strings.TrimSpace(o.tail)
 }
 
-func startChild(ctx context.Context, executable, fake string, s Strategy) (*childProcess, error) {
+func startChild(ctx context.Context, executable, fake string, s Strategy, watch ...bool) (*childProcess, error) {
 	l, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		return nil, err
@@ -57,13 +58,33 @@ func startChild(ctx context.Context, executable, fake string, s Strategy) (*chil
 		args = append(args, a)
 	}
 	cmd := exec.CommandContext(ctx, executable, args...)
+	var parentWrite *os.File
+	if len(watch) > 0 && watch[0] {
+		parentRead, writer, err := os.Pipe()
+		if err != nil {
+			return nil, err
+		}
+		defer parentRead.Close()
+		parentWrite = writer
+		cmd.Stdin = parentRead
+		cmd.Env = append(os.Environ(), "YOUTUBE_PLUGIN_PARENT_WATCH=1")
+	}
 	output := &processOutput{}
 	cmd.Stderr = output
 	if err = cmd.Start(); err != nil {
+		if parentWrite != nil {
+			parentWrite.Close()
+		}
 		return nil, err
 	}
 	child := &childProcess{cmd: cmd, done: make(chan struct{}), addr: net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), output: output}
-	go func() { cmd.Wait(); close(child.done) }()
+	go func() {
+		cmd.Wait()
+		if parentWrite != nil {
+			parentWrite.Close()
+		}
+		close(child.done)
+	}()
 	timeout := time.NewTimer(3 * time.Second)
 	defer timeout.Stop()
 	tick := time.NewTicker(30 * time.Millisecond)

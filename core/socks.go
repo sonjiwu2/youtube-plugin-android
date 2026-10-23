@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"time"
@@ -43,7 +44,7 @@ func dialSOCKS(ctx context.Context, proxy string, ip net.IP, port uint16) (net.C
 		return nil, err
 	}
 	if _, err = io.ReadFull(c, reply[:]); err != nil || reply[0] != 5 || reply[1] != 0 {
-		return nil, errors.New("SOCKS connect failed")
+		return nil, fmt.Errorf("SOCKS connect failed (reply %d)", reply[1])
 	}
 	n := 0
 	switch reply[3] {

@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 project(razgon_ciadpi C)
 set(CMAKE_C_STANDARD 99)
 add_executable(ciadpi byedpi/main.c byedpi/packets.c byedpi/conev.c
-    byedpi/proxy.c byedpi/desync.c byedpi/mpool.c byedpi/extend.c)
+    byedpi/proxy.c byedpi/desync.c byedpi/mpool.c byedpi/extend.c parent_watch.c)
 target_include_directories(ciadpi PRIVATE byedpi)
 target_compile_definitions(ciadpi PRIVATE _DEFAULT_SOURCE)
 target_compile_options(ciadpi PRIVATE -O2 -fPIE -Wall -Wno-unused-parameter)
