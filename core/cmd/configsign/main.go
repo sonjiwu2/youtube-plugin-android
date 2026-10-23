@@ -8,6 +8,7 @@ import (
 	"fmt"
 	core "github.com/sonjiwu2/youtube-android-zapret/core"
 	"os"
+	"path/filepath"
 )
 
 func main() {
@@ -23,6 +24,9 @@ func main() {
 		}
 		p, s, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
+			fail(err)
+		}
+		if err = os.MkdirAll(filepath.Dir(*key), 0700); err != nil {
 			fail(err)
 		}
 		if err = os.WriteFile(*key, []byte(base64.StdEncoding.EncodeToString(s)), 0600); err != nil {

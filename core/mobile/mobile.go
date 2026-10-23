@@ -49,3 +49,13 @@ func (e *Engine) Next() {
 		e.inner.Next()
 	}
 }
+
+func (e *Engine) Measure(address string) string {
+	e.mu.Lock()
+	inner := e.inner
+	e.mu.Unlock()
+	if inner == nil {
+		return `{"Error":"Движок остановлен"}`
+	}
+	return inner.Measure(address)
+}

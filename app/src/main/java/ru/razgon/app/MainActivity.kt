@@ -44,6 +44,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.Locale
+import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
     private val controller by lazy { EngineController(applicationContext) }
@@ -68,6 +69,9 @@ class MainActivity : ComponentActivity() {
     private var retryPending = false
     private var observedStrategy = ""
     private var strategySince = 0L
+    @Volatile private var lastVideoUrl = ""
+    private var measuring by mutableStateOf(false)
+    private var benchmark by mutableStateOf("")
     private val networks by lazy { getSystemService(ConnectivityManager::class.java) }
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) = networkChanged()
@@ -85,7 +89,7 @@ class MainActivity : ComponentActivity() {
     }
     override fun onStart() { super.onStart(); started = true; if (accepted) restart() }
     override fun onStop() {
-        started = false; generation++; ready = false; polling?.cancel(); destroyBrowser(); cancelNotification()
+        started = false; generation++; ready = false; polling?.cancel(); destroyBrowser(); cancelNotification(); lastVideoUrl = ""
         lifecycleScope.launch { transition.withLock { controller.stop() } }
         super.onStop()
     }
@@ -163,6 +167,11 @@ class MainActivity : ComponentActivity() {
         CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
         if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) WebSettingsCompat.setAlgorithmicDarkeningAllowed(settings, true)
         webViewClient = object : WebViewClient() {
+            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+                val host = request.url.host.orEmpty().lowercase()
+                if (request.url.scheme == "https" && (host == "googlevideo.com" || host.endsWith(".googlevideo.com")) && request.url.path?.contains("videoplayback") == true) lastVideoUrl = request.url.toString()
+                return null
+            }
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
                 request.url.scheme != "https" || request.isForMainFrame && !allowedPage(request.url)
             override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) { loading = true }
@@ -196,6 +205,7 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= 26 && packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE) && ready)
             enterPictureInPictureMode(PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).build())
     }
+    override fun onUserLeaveHint() { if (fullScreen && ready) enterPip(); super.onUserLeaveHint() }
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig); inPip = isInPictureInPictureMode
     }
@@ -211,8 +221,8 @@ class MainActivity : ComponentActivity() {
     private fun cancelNotification() = getSystemService(NotificationManager::class.java).cancel(42)
 
     @Composable private fun App() {
-        val scheme = if (isSystemInDarkTheme()) darkColorScheme(primary = Color(0xFFB5F768), background = Color(0xFF101410), surface = Color(0xFF171D17))
-            else lightColorScheme(primary = Color(0xFF315F17), background = Color(0xFFF4F6EF), surface = Color.White)
+        val scheme = if (isSystemInDarkTheme()) darkColorScheme(primary = Color(0xFFB5F768), primaryContainer = Color(0xFF2E4221), onPrimaryContainer = Color(0xFFE0F2D0), background = Color(0xFF101410), surface = Color(0xFF171D17))
+            else lightColorScheme(primary = Color(0xFF315F17), primaryContainer = Color(0xFFE0EBCF), onPrimaryContainer = Color(0xFF142309), background = Color(0xFFF4F6EF), surface = Color.White)
         MaterialTheme(colorScheme = scheme) {
             BackHandler { when { customView != null -> hideCustomView(); showInfo -> showInfo = false; webView?.canGoBack() == true -> webView?.goBack(); else -> finish() } }
             Surface(Modifier.fillMaxSize()) {
@@ -285,7 +295,19 @@ class MainActivity : ComponentActivity() {
         AlertDialog(onDismissRequest = { showInfo = false }, title = { Text("Разгон · ${BuildConfig.VERSION_NAME}") }, text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 Text("Трафик: ${String.format(Locale.US, "%.1f", status.bytes / 1048576.0)} МБ\nСтратегий проверено: ${status.attempts}\n${status.update}")
-                Spacer(Modifier.height(16.dp)); Text("Скорость измеряется по первым зашифрованным чанкам googlevideo.com. Прямой замер «до» не выполняется: трафик WebView остаётся внутри прокси.")
+                Spacer(Modifier.height(16.dp)); Text("Индикатор показывает скорость первых чанков видео. Для сравнения «до / после» запустите видео и нажмите кнопку ниже. Замер загрузит два небольших фрагмента: напрямую и с Разгоном.")
+                Button(onClick = {
+                    measuring = true
+                    lifecycleScope.launch {
+                        try {
+                            val result = JSONObject(controller.measure(lastVideoUrl))
+                            fun speed(key: String): String = result.optDouble(key).takeIf { it > 0 }?.let { String.format(Locale.US, "%.2f Мбит/с", it * 8 / 1_000_000) } ?: "нет данных"
+                            benchmark = "До: ${speed("Before")}\nС Разгоном: ${speed("After")}\n${result.optString("Error")}".trim()
+                        } catch (_: Exception) { benchmark = "Замер прерван. Повторите при воспроизведении видео." }
+                        finally { measuring = false }
+                    }
+                }, enabled = ready && !measuring && lastVideoUrl.isNotEmpty()) { Text(if (measuring) "Измеряем…" else "Сравнить скорость") }
+                if (benchmark.isNotEmpty()) Text(benchmark)
                 Spacer(Modifier.height(16.dp)); Text("Образовательный open-source проект. Не связан с Google или YouTube. Вход в Google во встроенном браузере может быть ограничен самим Google.")
                 Spacer(Modifier.height(16.dp)); Text("ByeDPI · MIT, © 2024 hufrea\nFlowseal / zapret · MIT\nGo · BSD-3-Clause\nAndroidX / Compose · Apache-2.0\nПолные лицензии включены в APK и репозиторий.")
                 Spacer(Modifier.height(16.dp))

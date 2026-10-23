@@ -380,7 +380,8 @@ func (e *Engine) next(expected string) {
 		for c := range e.conns {
 			c.Close()
 		}
-		old:=e.child;e.child=nil
+		old := e.child
+		e.child = nil
 		e.mu.Unlock()
 		old.stop()
 		return

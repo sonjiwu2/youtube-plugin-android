@@ -65,6 +65,10 @@ class EngineController(private val context: Context) {
     }
 
     suspend fun next() = withContext(Dispatchers.IO) { engine?.next(); Unit }
+    suspend fun measure(address: String): String {
+        val current = engine ?: return "{\"Error\":\"Движок остановлен\"}"
+        return withContext(Dispatchers.IO) { current.measure(address) }
+    }
     suspend fun status(): EngineStatus = withContext(Dispatchers.IO) {
         val json = JSONObject(engine?.status() ?: "{\"state\":\"stopped\"}")
         EngineStatus(json.optString("state"), json.optString("strategy"), json.optString("strategyId"),
