@@ -1,29 +1,32 @@
 name: CI
-
-# Заготовка: проверка Go-ядра и сборка debug-APK на каждый push и PR.
-# Релизная сборка по тегу v* добавится на этапе 7.
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   core:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Ядро появляется на этапе 1; до этого шаги пропускаются (hashFiles доступен только в шагах).
       - uses: actions/setup-go@v5
-        if: hashFiles('core/go.mod') != ''
         with:
-          go-version-file: core/go.mod
+          go-version: '1.26.3'
           cache-dependency-path: core/go.sum
-      - name: Тесты Go-ядра
-        if: hashFiles('core/go.mod') != ''
+      - name: Проверка Go-ядра
         working-directory: core
-        run: go vet ./... && go test -race ./...
+        run: go vet ./... && go test -race -timeout 120s ./...
+      - name: Проверка форматирования
+        working-directory: core
+        run: test -z "$(gofmt -l .)"
 
   android:
+    needs: core
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,10 +34,63 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.3'
+          cache-dependency-path: core/go.sum
+      - uses: android-actions/setup-android@v3
       - uses: gradle/actions/setup-gradle@v4
-      - name: Debug-APK
-        run: ./gradlew :app:assembleDebug
+      - name: SDK, NDK и CMake
+        run: bash scripts/install-sdk.sh
+      - name: ciadpi и Go AAR
+        run: bash scripts/build-engine.sh
+      - name: Debug, тесты и lint
+        run: bash gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
       - uses: actions/upload-artifact@v4
         with:
-          name: app-debug
+          name: debug-apk
           path: app/build/outputs/apk/debug/*.apk
+      - name: Подготовить ключ релиза
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          test -n "$KEYSTORE" && test -n "$STORE_PASSWORD"
+          printf '%s' "$KEYSTORE" | base64 --decode > "$RUNNER_TEMP/release.jks"
+      - name: Подписанные release APK
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          ANDROID_KEYSTORE_FILE: ${{ runner.temp }}/release.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: bash gradlew :app:assembleRelease -PsplitApk
+      - name: Подготовить файлы релиза
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          mkdir -p dist
+          for ABI in arm64-v8a armeabi-v7a x86_64 universal; do
+            cp "app/build/outputs/apk/release/app-$ABI-release.apk" "dist/razgon-$GITHUB_REF_NAME-$ABI.apk"
+          done
+          (cd dist && sha256sum *.apk > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          name: release-apks
+          path: dist/*
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: android
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-apks
+          path: dist
+      - name: Опубликовать релиз
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "Разгон $GITHUB_REF_NAME" --notes-file docs/RELEASE.md

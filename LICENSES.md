@@ -18,7 +18,12 @@
   архитектурные идеи (ciadpi в отдельном процессе, CMake-сборка под ABI).
 * **hev-socks5-tunnel** не нужен: проект не использует VpnService.
 
-## Проверка перед сборкой ciadpi (этап 2)
+## Зафиксированные исходники
 
-Лицензию ByeDPI нужно перепроверить на коммите, который вендорится в `native/`, и положить её
-текст рядом с исходниками и в `assets/licenses/`.
+ciadpi: `ba532298de7b28cfe854aea83d061369d13ca290` (v17.3), MIT перепроверена перед сборкой.
+Полный upstream находится в `native/byedpi/`; локальная CMake-обвязка — в `native/CMakeLists.txt`.
+Лицензия также включена в APK: `assets/licenses/byedpi.txt`.
+
+TLS-образец Google и лицензия Flowseal взяты из коммита `176f56d`;
+лицензия включена в `assets/licenses/flowseal.txt`. APK содержит также собственную MIT,
+BSD-3-Clause Go и Apache-2.0 AndroidX. Исходники GPL Android-портов не включены.
