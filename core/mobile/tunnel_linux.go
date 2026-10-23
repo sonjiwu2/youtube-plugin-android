@@ -51,7 +51,8 @@ func startTunnel(fd int, engine *core.Engine) (*vpnTunnel, error) {
 	}
 	_, cancel := context.WithCancel(context.Background())
 	t := &vpnTunnel{device: dev, engine: engine, cancel: cancel, conns: map[net.Conn]bool{}, sem: make(chan struct{}, 64)}
-	s, err := netstack.CreateStack(&netstack.Config{LinkEndpoint: dev, TransportHandler: t})
+	link := &deferredLink{LinkEndpoint: dev}
+	s, err := netstack.CreateStack(&netstack.Config{LinkEndpoint: link, TransportHandler: t})
 	if err != nil {
 		dev.Close()
 		cancel()
@@ -75,7 +76,37 @@ func startTunnel(fd int, engine *core.Engine) (*vpnTunnel, error) {
 		}
 		return dnsForwarder.HandlePacket(id, packet)
 	})
+	link.start()
 	return t, nil
+}
+
+// Protocol handlers must be completely initialized before the descriptor's
+// reader starts. NIC construction normally attaches and starts it immediately.
+type deferredLink struct {
+	stack.LinkEndpoint
+	mu         sync.Mutex
+	dispatcher stack.NetworkDispatcher
+	started    bool
+}
+
+func (l *deferredLink) Attach(d stack.NetworkDispatcher) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.dispatcher = d
+	if l.started {
+		l.LinkEndpoint.Attach(d)
+	}
+}
+func (l *deferredLink) IsAttached() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.dispatcher != nil
+}
+func (l *deferredLink) start() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.started = true
+	l.LinkEndpoint.Attach(l.dispatcher)
 }
 
 type dnsConnection struct {
