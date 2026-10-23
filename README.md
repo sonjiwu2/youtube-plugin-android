@@ -4,7 +4,7 @@ YouTube для Android со встроенным обходом замедлен
 
 **[Скачать APK для Android →](https://github.com/sonjiwu2/youtube-android-zapret/releases/latest)**
 
-[![Актуальный выпуск](https://img.shields.io/github/v/release/sonjiwu2/youtube-android-zapret?label=Скачать&color=83b84b)](https://github.com/sonjiwu2/youtube-android-zapret/releases/latest)
+[![Скачать Разгон 0.1.1](https://img.shields.io/badge/Скачать-Разгон%200.1.1-83b84b)](https://github.com/sonjiwu2/youtube-android-zapret/releases/latest)
 ![Android 7.0+](https://img.shields.io/badge/Android-7.0%2B-83b84b)
 ![Лицензия MIT](https://img.shields.io/github/license/sonjiwu2/youtube-android-zapret)
 
