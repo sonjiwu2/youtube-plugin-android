@@ -36,3 +36,28 @@ func TestLiveProxy(t *testing.T) {
 	}
 	t.Logf("HTTPS through CONNECT → ciadpi → DoH-resolved IP: %d bytes, %s", n, e.StatusJSON())
 }
+
+func TestLiveSignedUpdate(t *testing.T) {
+	executable := os.Getenv("RAZGON_LIVE_CIADPI")
+	if executable == "" {
+		t.Skip("set RAZGON_LIVE_CIADPI for a live update test")
+	}
+	pub, err := os.ReadFile("../app/src/main/assets/config-public.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := Start(Options{Executable: executable, FakePath: os.Getenv("RAZGON_LIVE_FAKE"), DataDir: t.TempDir(), PublicKey: string(pub), RemoteURL: "https://github.com/sonjiwu2/youtube-android-zapret/releases/download/strategies/strategies.json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Stop()
+	deadline := time.Now().Add(45 * time.Second)
+	for time.Now().Before(deadline) {
+		if e.Snapshot().ConfigVersion > 1 {
+			t.Log(e.StatusJSON())
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatal("signed remote update was not applied: " + e.StatusJSON())
+}
