@@ -38,7 +38,7 @@ class EngineController(private val context: Context) {
                 val pub = context.assets.open("config-public.txt").bufferedReader().use { it.readText().trim() }
                 next.start(File(context.applicationInfo.nativeLibraryDir, "libciadpi.so").absolutePath,
                     fake.absolutePath, data.absolutePath, profile,
-                    "https://raw.githubusercontent.com/sonjiwu2/youtube-android-zapret/main/updates/strategies.json", pub)
+                    "https://raw.githubusercontent.com/sonjiwu2/youtube-plugin-android/main/updates/strategies.json", pub)
             }
             setProxy(port.toInt())
         } catch (error: Exception) {

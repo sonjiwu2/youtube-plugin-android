@@ -3,7 +3,7 @@ package mobile
 
 import (
 	"errors"
-	core "github.com/sonjiwu2/youtube-android-zapret/core"
+	core "github.com/sonjiwu2/youtube-plugin-android/core"
 	"sync"
 )
 

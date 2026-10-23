@@ -1,4 +1,4 @@
-module github.com/sonjiwu2/youtube-android-zapret/core
+module github.com/sonjiwu2/youtube-plugin-android/core
 
 go 1.26.0
 

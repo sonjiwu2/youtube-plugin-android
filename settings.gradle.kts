@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "razgon"
+rootProject.name = "YoutubePlugin"
 include(":app")

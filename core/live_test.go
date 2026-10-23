@@ -54,7 +54,7 @@ func TestLiveSignedUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := Start(Options{Executable: executable, FakePath: os.Getenv("RAZGON_LIVE_FAKE"), DataDir: t.TempDir(), PublicKey: string(pub), RemoteURL: "https://raw.githubusercontent.com/sonjiwu2/youtube-android-zapret/main/updates/strategies.json"})
+	e, err := Start(Options{Executable: executable, FakePath: os.Getenv("RAZGON_LIVE_FAKE"), DataDir: t.TempDir(), PublicKey: string(pub), RemoteURL: "https://raw.githubusercontent.com/sonjiwu2/youtube-plugin-android/main/updates/strategies.json"})
 	if err != nil {
 		t.Fatal(err)
 	}

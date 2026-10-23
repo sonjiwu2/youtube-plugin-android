@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Тема окна до отрисовки Compose: только фон и системные панели, остальное задаёт Compose-тема. -->
-    <style name="Theme.Razgon" parent="android:Theme.Material.Light.NoActionBar">
+    <style name="Theme.YoutubePlugin" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/window_background</item>
     </style>
 </resources>

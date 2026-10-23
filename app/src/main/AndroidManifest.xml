@@ -14,7 +14,7 @@
         android:roundIcon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Razgon">
+        android:theme="@style/Theme.YoutubePlugin">
 
         <activity
             android:name=".MainActivity"

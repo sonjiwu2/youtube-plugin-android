@@ -1,9 +1,9 @@
-# Разработка и сопровождение Разгона
+# Разработка и сопровождение Youtube Plugin
 
 Мобильный YouTube в Android-приложении со встроенным userspace-движком ByeDPI.
 Пакет: `ru.razgon.app`, Android 7.0+. Без root, VpnService и системного VPN-профиля.
 
-**Скачать:** [GitHub Releases](https://github.com/sonjiwu2/youtube-android-zapret/releases/latest).
+**Скачать:** [GitHub Releases](https://github.com/sonjiwu2/youtube-plugin-android/releases/latest).
 Для современного телефона выбирайте `arm64-v8a`, при сомнениях — `universal`.
 Разрешите установку APK из выбранного браузера/файлового менеджера и откройте приложение.
 Обновления APK устанавливаются поверх предыдущей версии: подпись сохраняется.
@@ -91,8 +91,8 @@ Native/Go артефакты генерируются локально и не �
 ## Release и CI
 
 На push в `main` и PR GitHub Actions запускает Go vet, race-тесты, native/gomobile сборку,
-Android lint и debug-сборку. По тегу `v*` публикует один подписанный universal APK,
-который включает три ABI. При обновлении выпуска прежние файлы убираются.
+Android lint и debug-сборку. По тегу `v*` публикует подписанные APK arm64-v8a,
+armeabi-v7a, x86_64 и universal с именем Youtube Plugin.
 
 Для своей копии репозитория создайте постоянный JKS с alias `razgon` и задайте GitHub Secrets:
 
@@ -112,7 +112,7 @@ Android lint и debug-сборку. По тегу `v*` публикует оди
 ## Обновление стратегий без APK
 
 Приложение использует стабильный адрес
-`https://raw.githubusercontent.com/sonjiwu2/youtube-android-zapret/main/updates/strategies.json`
+`https://raw.githubusercontent.com/sonjiwu2/youtube-plugin-android/main/updates/strategies.json`
 и соседний файл `strategies.json.sig`. Публичный ключ — `app/src/main/assets/config-public.txt`.
 Проверка выполняется при запуске и каждые 6 часов, пока движок активен; подписанный кэш
 проверяется заново при каждом запуске. Новые стратегии добавляются без сброса текущего видео.

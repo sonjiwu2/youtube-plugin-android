@@ -129,7 +129,7 @@ class MainActivity : ComponentActivity() {
                 if (generation != token) break
                 if (retryPending) { delay(200); continue }
                 if (BuildConfig.DEBUG && next.error.isNotEmpty() && next.error != status.error)
-                    android.util.Log.d("RazgonEngine", next.error)
+                    android.util.Log.d("YoutubePluginEngine", next.error)
                 status = next
                 if (next.strategyId != observedStrategy) {
                     observedStrategy = next.strategyId; strategySince = System.currentTimeMillis()
@@ -227,7 +227,7 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
         val intent = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         manager.notify(42, NotificationCompat.Builder(this, "engine").setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setContentTitle("Разгон · ${profile.label}").setContentText(statusText(status.state)).setContentIntent(intent)
+            .setContentTitle("Youtube Plugin · ${profile.label}").setContentText(statusText(status.state)).setContentIntent(intent)
             .setOnlyAlertOnce(true).setOngoing(true).setSilent(true).build())
     }
     private fun cancelNotification() = getSystemService(NotificationManager::class.java).cancel(42)
@@ -235,7 +235,7 @@ class MainActivity : ComponentActivity() {
     private fun shareDiagnostics() {
         lifecycleScope.launch {
             val web = webViewPackage()
-            val report = "Разгон ${BuildConfig.VERSION_NAME}\nAndroid ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})\n${Build.MANUFACTURER} ${Build.MODEL}\nWebView: $web\nСеть: ${profile.label}\n$lastBrowserError\n${controller.diagnostics()}"
+            val report = "Youtube Plugin ${BuildConfig.VERSION_NAME}\nAndroid ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})\n${Build.MANUFACTURER} ${Build.MODEL}\nWebView: $web\nСеть: ${profile.label}\n$lastBrowserError\n${controller.diagnostics()}"
             startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"; putExtra(Intent.EXTRA_TEXT, report)
             }, "Отчёт о подключении"))
@@ -253,7 +253,7 @@ class MainActivity : ComponentActivity() {
                     if (!inPip && !fullScreen) {
                         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
-                                Text("РАЗГОН", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
+                                Text("Youtube Plugin", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
                                 Text(profile.label.ifEmpty { "Личное подключение" }, style = MaterialTheme.typography.labelMedium)
                             }
                             TextButton(onClick = { showInfo = true }) { Text("О приложении") }
@@ -291,7 +291,7 @@ class MainActivity : ComponentActivity() {
         Column(Modifier.fillMaxSize().systemBarsPadding().padding(28.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.Center) {
             Text("↗", style = MaterialTheme.typography.displayLarge, color = MaterialTheme.colorScheme.primary)
             Spacer(Modifier.height(24.dp)); Text("Видео.\nВ своём темпе.", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(20.dp)); Text("Разгон открывает мобильную версию YouTube и подбирает подключение для вашей сети.", style = MaterialTheme.typography.bodyLarge)
+            Spacer(Modifier.height(20.dp)); Text("Youtube Plugin открывает мобильную версию YouTube и подбирает подключение для вашей сети.", style = MaterialTheme.typography.bodyLarge)
             Spacer(Modifier.height(24.dp)); Text("Без root и VPN\nТолько трафик внутри приложения\nDNS через зашифрованное соединение\nДвижок останавливается при выходе", lineHeight = 28.sp)
             Spacer(Modifier.height(24.dp)); Text("Работа зависит от оператора. Блокировку по IP и белые списки обойти может быть невозможно.", style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(28.dp))
@@ -316,18 +316,18 @@ class MainActivity : ComponentActivity() {
         }
     }
     @Composable private fun InfoDialog() {
-        AlertDialog(onDismissRequest = { showInfo = false }, title = { Text("Разгон · ${BuildConfig.VERSION_NAME}") }, text = {
+        AlertDialog(onDismissRequest = { showInfo = false }, title = { Text("Youtube Plugin · ${BuildConfig.VERSION_NAME}") }, text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 Text("Трафик: ${String.format(Locale.US, "%.1f", status.bytes / 1048576.0)} МБ\nСтратегий проверено: ${status.attempts}\n${status.update}")
                 TextButton(onClick = { shareDiagnostics() }) { Text("Поделиться отчётом о подключении") }
-                Spacer(Modifier.height(16.dp)); Text("Индикатор показывает скорость первых чанков видео. Для сравнения «до / после» запустите видео и нажмите кнопку ниже. Замер загрузит два небольших фрагмента: напрямую и с Разгоном.")
+                Spacer(Modifier.height(16.dp)); Text("Индикатор показывает скорость первых чанков видео. Для сравнения «до / после» запустите видео и нажмите кнопку ниже. Замер загрузит два небольших фрагмента: напрямую и с Youtube Plugin.")
                 Button(onClick = {
                     measuring = true
                     lifecycleScope.launch {
                         try {
                             val result = JSONObject(controller.measure(lastVideoUrl))
                             fun speed(key: String): String = result.optDouble(key).takeIf { it > 0 }?.let { String.format(Locale.US, "%.2f Мбит/с", it * 8 / 1_000_000) } ?: "нет данных"
-                            benchmark = "До: ${speed("Before")}\nС Разгоном: ${speed("After")}\n${result.optString("Error")}".trim()
+                            benchmark = "До: ${speed("Before")}\nС Youtube Plugin: ${speed("After")}\n${result.optString("Error")}".trim()
                         } catch (_: Exception) { benchmark = "Замер прерван. Повторите при воспроизведении видео." }
                         finally { measuring = false }
                     }

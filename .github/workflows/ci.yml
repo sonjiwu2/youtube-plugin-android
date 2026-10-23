@@ -68,7 +68,9 @@ jobs:
         run: |
           mkdir -p dist
           VERSION="$(sed -n 's/ *versionName = "\([^"]*\)"/\1/p' app/build.gradle.kts)"
-          cp app/build/outputs/apk/release/app-universal-release.apk "dist/razgon-v$VERSION-universal.apk"
+          for ABI in arm64-v8a armeabi-v7a x86_64 universal; do
+            cp "app/build/outputs/apk/release/app-$ABI-release.apk" "dist/Youtube-Plugin-v$VERSION-$ABI.apk"
+          done
       - uses: actions/upload-artifact@v4
         if: startsWith(github.ref, 'refs/tags/v')
         with:
@@ -94,11 +96,7 @@ jobs:
           VERSION="$(sed -n 's/ *versionName = "\([^"]*\)"/\1/p' app/build.gradle.kts)"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" dist/* --clobber
-            gh release edit "$GITHUB_REF_NAME" --title "Разгон $VERSION" --notes-file docs/RELEASE.md --latest --prerelease=false --draft=false
+            gh release edit "$GITHUB_REF_NAME" --title "Youtube Plugin $VERSION" --notes-file docs/RELEASE.md --latest --prerelease=false --draft=false
           else
-            gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "Разгон $VERSION" --notes-file docs/RELEASE.md --latest
+            gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "Youtube Plugin $VERSION" --notes-file docs/RELEASE.md --latest
           fi
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" --jq ".assets[] | select(.name != \"razgon-v$VERSION-universal.apk\") | .id" > obsolete-assets.txt
-          while read -r ASSET_ID; do
-            gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$ASSET_ID"
-          done < obsolete-assets.txt

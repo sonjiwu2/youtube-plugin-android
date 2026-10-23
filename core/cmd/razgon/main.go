@@ -3,7 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
-	core "github.com/sonjiwu2/youtube-android-zapret/core"
+	core "github.com/sonjiwu2/youtube-plugin-android/core"
 	"os"
 	"os/signal"
 	"time"
