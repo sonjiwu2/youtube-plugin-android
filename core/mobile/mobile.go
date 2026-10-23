@@ -2,14 +2,16 @@
 package mobile
 
 import (
+	"encoding/json"
 	"errors"
 	core "github.com/sonjiwu2/youtube-plugin-android/core"
 	"sync"
 )
 
 type Engine struct {
-	mu    sync.Mutex
-	inner *core.Engine
+	mu     sync.Mutex
+	inner  *core.Engine
+	tunnel *vpnTunnel
 }
 
 func NewEngine() *Engine { return &Engine{} }
@@ -30,9 +32,41 @@ func (e *Engine) Stop() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.inner != nil {
+		e.tunnel.stop()
+		e.tunnel = nil
 		e.inner.Stop()
 		e.inner = nil
 	}
+}
+
+func (e *Engine) StartVPN(fd int, executable, fakePath, dataDir, profile, remoteURL, publicKey, strategy, dns string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.inner != nil {
+		return errors.New("engine already running")
+	}
+	inner, err := core.Start(core.Options{Executable: executable, FakePath: fakePath, DataDir: dataDir, Profile: profile, RemoteURL: remoteURL, PublicKey: publicKey, AutoProbe: true, Strategy: strategy, DNS: dns})
+	if err != nil {
+		return err
+	}
+	tunnel, err := startTunnel(fd, inner)
+	if err != nil {
+		inner.Stop()
+		return err
+	}
+	e.inner, e.tunnel = inner, tunnel
+	return nil
+}
+
+func (e *Engine) Strategies() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.inner != nil {
+		return e.inner.StrategiesJSON()
+	}
+	cfg, _ := core.ParseConfig(core.BuiltinJSON)
+	b, _ := json.Marshal(cfg.Strategies)
+	return string(b)
 }
 func (e *Engine) Status() string {
 	e.mu.Lock()

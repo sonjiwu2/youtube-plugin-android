@@ -8,7 +8,10 @@
 | TLS-фейки `tls_clienthello_*.bin` | [Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube) | MIT, © 2016-2026 bol-van, © 2024-2026 Flowseal | бинарные данные в assets | сохранить копирайт |
 | Списки доменов (идеи состава) | Flowseal, zapret | MIT | собственный hostlist, составленный по их спискам | указать источник |
 | Методики desync | [bol-van/zapret](https://github.com/bol-van/zapret) | MIT, © 2016-2024 bol-van | только идеи, код не заимствуется | — |
-| AndroidX, Jetpack Compose, Media3 | Google | Apache-2.0 | зависимости Gradle | уведомление в «О приложении» |
+| tun2socks v2.7.0 | [xjasonlyu/tun2socks](https://github.com/xjasonlyu/tun2socks) | MIT, © 2019 Jason Lyu | адаптер TUN и TCP/UDP forwarder | сохранить копирайт и лицензию |
+| gVisor netstack | [google/gvisor](https://github.com/google/gvisor) | Apache-2.0 | пользовательский TCP/IP-стек | сохранить лицензию и уведомления |
+| google/btree | Google | Apache-2.0 | зависимость netstack | сохранить лицензию |
+| AndroidX, Jetpack Compose | Google | Apache-2.0 | зависимости Gradle | уведомление в «О приложении» |
 | Go stdlib, `golang.org/x/*` | The Go Authors | BSD-3-Clause | зависимости Go-ядра | сохранить уведомление |
 
 ## Что сознательно **не** используется
@@ -16,7 +19,7 @@
 * **ByeDPIAndroid, ByeByeDPI** — GPL-3.0. Их код (JNI, сервисы, Kotlin) не копируется:
   иначе весь APK пришлось бы распространять под GPL-3.0. Из этих проектов взяты только
   архитектурные идеи (ciadpi в отдельном процессе, CMake-сборка под ABI).
-* **hev-socks5-tunnel** не нужен: проект не использует VpnService.
+* **hev-socks5-tunnel** не используется: локальный VPN работает через MIT tun2socks и Apache-2.0 gVisor.
 
 ## Зафиксированные исходники
 

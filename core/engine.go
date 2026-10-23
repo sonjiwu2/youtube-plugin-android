@@ -23,6 +23,7 @@ type Options struct {
 	Executable, FakePath, DataDir, Profile, RemoteURL, PublicKey string
 	Direct                                                       bool
 	AutoProbe                                                    bool
+	Strategy, DNS                                                string
 }
 type Status struct {
 	State         string  `json:"state"`
@@ -30,6 +31,7 @@ type Status struct {
 	StrategyID    string  `json:"strategyId"`
 	Speed         float64 `json:"bytesPerSecond"`
 	Total         int64   `json:"totalBytes"`
+	Uploaded      int64   `json:"uploadedBytes"`
 	Attempts      int     `json:"attempts"`
 	ConfigVersion int64   `json:"configVersion"`
 	Update        string  `json:"update"`
@@ -82,7 +84,24 @@ func Start(opts Options) (*Engine, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	e := &Engine{opts: opts, config: cfg, ctx: ctx, cancel: cancel, conns: map[net.Conn]bool{}, sem: make(chan struct{}, 128), tried: map[string]bool{}, probeWake: make(chan struct{}, 1)}
 	e.resolver = NewResolver(cfg.Fallback)
+	if err := e.resolver.selectProvider(opts.DNS); err != nil {
+		cancel()
+		return nil, err
+	}
 	e.index = e.cachedIndex()
+	if opts.Strategy != "" && opts.Strategy != "auto" {
+		e.index = -1
+		for i, s := range cfg.Strategies {
+			if s.ID == opts.Strategy {
+				e.index = i
+				break
+			}
+		}
+		if e.index < 0 {
+			cancel()
+			return nil, errors.New("unknown strategy")
+		}
+	}
 	e.status = Status{State: "connecting", ConfigVersion: cfg.Version}
 	if !opts.Direct {
 		e.child, err = startChild(ctx, opts.Executable, opts.FakePath, cfg.Strategies[e.index])
@@ -224,6 +243,13 @@ func (e *Engine) handle(c net.Conn) {
 	// CONNECT задаёт адрес назначения. ECH может использовать другое внешнее SNI;
 	// проверку сертификата и подлинности сервера выполняет сам браузер.
 	_ = sni
+	e.forwardTLS(c, host, ips, hello, target, adaptive)
+}
+
+// forwardTLS preserves the application's TLS stream and certificate validation.
+func (e *Engine) forwardTLS(c net.Conn, host string, ips []net.IP, hello []byte, target, adaptive bool) {
+	var err error
+	var id string
 	var upstream net.Conn
 	ctx, cancel := context.WithTimeout(e.ctx, 10*time.Second)
 	defer cancel()
@@ -262,11 +288,17 @@ func (e *Engine) handle(c net.Conn) {
 		e.failure(id, adaptive)
 		return
 	}
+	e.addUpload(len(hello))
 	upstream.SetWriteDeadline(time.Time{})
 	c.SetDeadline(time.Time{})
 	done := make(chan struct{})
 	clientEnded := make(chan struct{}, 1)
-	go func() { io.Copy(upstream, c); clientEnded <- struct{}{}; upstream.Close(); close(done) }()
+	go func() {
+		io.Copy(upstream, uploadReader{c, e})
+		clientEnded <- struct{}{}
+		upstream.Close()
+		close(done)
+	}()
 	bytes, speed, readErr := e.copyDown(c, upstream, MatchHost(host, []string{"googlevideo.com"}), id)
 	clientCancelled := false
 	select {
@@ -300,6 +332,18 @@ func (e *Engine) handle(c net.Conn) {
 		}
 	}
 }
+
+type uploadReader struct {
+	io.Reader
+	engine *Engine
+}
+
+func (r uploadReader) Read(b []byte) (int, error) {
+	n, err := r.Reader.Read(b)
+	r.engine.addUpload(n)
+	return n, err
+}
+func (e *Engine) addUpload(n int) { e.mu.Lock(); e.status.Uploaded += int64(n); e.mu.Unlock() }
 
 func (e *Engine) noteError(id, message string) {
 	e.mu.Lock()
@@ -403,6 +447,9 @@ func (e *Engine) next(expected string) {
 	e.status.Verified = false
 	next := -1
 	for i := range e.config.Strategies {
+		if e.opts.Strategy != "" && e.opts.Strategy != "auto" {
+			break
+		}
 		if !e.tried[e.config.Strategies[i].ID] {
 			next = i
 			break
@@ -411,6 +458,9 @@ func (e *Engine) next(expected string) {
 	if next < 0 {
 		e.status.State = "blocked"
 		e.status.Error = "Все встроенные стратегии проверены. В этой сети обход сейчас недоступен."
+		if e.opts.Strategy != "" && e.opts.Strategy != "auto" {
+			e.status.Error = "Выбранная стратегия не работает в этой сети. Выберите автоподбор или другую стратегию."
+		}
 		for c := range e.conns {
 			c.Close()
 		}

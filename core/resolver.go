@@ -36,6 +36,24 @@ func NewResolver(fallback map[string][]string) *Resolver {
 	}}
 }
 
+func (r *Resolver) selectProvider(provider string) error {
+	if provider == "" || provider == "auto" {
+		return nil
+	}
+	host := map[string]string{"google": "dns.google", "cloudflare": "cloudflare-dns.com"}[provider]
+	if host == "" {
+		return errors.New("unknown DNS provider")
+	}
+	filtered := r.providers[:0]
+	for _, p := range r.providers {
+		if p.Host == host {
+			filtered = append(filtered, p)
+		}
+	}
+	r.providers = filtered
+	return nil
+}
+
 func (r *Resolver) Resolve(ctx context.Context, host string) ([]net.IP, error) {
 	host = normalizeHost(host)
 	if ip := net.ParseIP(host); ip != nil {
