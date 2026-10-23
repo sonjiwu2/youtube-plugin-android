@@ -1,0 +1,5 @@
+// Плагины объявляются здесь один раз, чтобы все модули брали одинаковые версии из каталога.
+plugins {
+    alias(libs.plugins.android.application) apply false
+    alias(libs.plugins.kotlin.compose) apply false
+}
