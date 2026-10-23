@@ -91,8 +91,8 @@ Native/Go артефакты генерируются локально и не �
 ## Release и CI
 
 На push в `main` и PR GitHub Actions запускает Go vet, race-тесты, native/gomobile сборку,
-Android lint и debug-сборку. По тегу `v*` собирает и публикует подписанные APK для трёх ABI
-и universal, а также `SHA256SUMS.txt`.
+Android lint и debug-сборку. По тегу `v*` публикует один подписанный universal APK,
+который включает три ABI. При обновлении выпуска прежние файлы убираются.
 
 Для своей копии репозитория создайте постоянный JKS с alias `razgon` и задайте GitHub Secrets:
 

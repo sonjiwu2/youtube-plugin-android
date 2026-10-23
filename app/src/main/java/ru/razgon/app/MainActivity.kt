@@ -333,7 +333,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }, enabled = ready && !measuring && lastVideoUrl.isNotEmpty()) { Text(if (measuring) "Измеряем…" else "Сравнить скорость") }
                 if (benchmark.isNotEmpty()) Text(benchmark)
-                Spacer(Modifier.height(16.dp)); Text("Образовательный open-source проект. Не связан с Google или YouTube. Вход в Google во встроенном браузере может быть ограничен самим Google.")
+                Spacer(Modifier.height(16.dp)); Text("Open-source приложение для обхода ограничений YouTube. Вход в Google во встроенном браузере может быть ограничен самим Google.")
                 Spacer(Modifier.height(16.dp)); Text("ByeDPI · MIT, © 2024 hufrea\nFlowseal / zapret · MIT\nGo · BSD-3-Clause\nAndroidX / Compose · Apache-2.0\nПолные лицензии включены в APK и репозиторий.")
                 Spacer(Modifier.height(16.dp))
                 TextButton(onClick = { CookieManager.getInstance().removeAllCookies(null); CookieManager.getInstance().flush(); webView?.clearCache(true); showInfo = false; restart(resetToHome = true) }) { Text("Очистить данные сайтов") }

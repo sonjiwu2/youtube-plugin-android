@@ -68,10 +68,7 @@ jobs:
         run: |
           mkdir -p dist
           VERSION="$(sed -n 's/ *versionName = "\([^"]*\)"/\1/p' app/build.gradle.kts)"
-          for ABI in arm64-v8a armeabi-v7a x86_64 universal; do
-            cp "app/build/outputs/apk/release/app-$ABI-release.apk" "dist/razgon-v$VERSION-$ABI.apk"
-          done
-          (cd dist && sha256sum *.apk > SHA256SUMS.txt)
+          cp app/build/outputs/apk/release/app-universal-release.apk "dist/razgon-v$VERSION-universal.apk"
       - uses: actions/upload-artifact@v4
         if: startsWith(github.ref, 'refs/tags/v')
         with:
@@ -101,3 +98,7 @@ jobs:
           else
             gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "Разгон $VERSION" --notes-file docs/RELEASE.md --latest
           fi
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" --jq ".assets[] | select(.name != \"razgon-v$VERSION-universal.apk\") | .id" > obsolete-assets.txt
+          while read -r ASSET_ID; do
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$ASSET_ID"
+          done < obsolete-assets.txt
