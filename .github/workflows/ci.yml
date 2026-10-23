@@ -10,15 +10,16 @@ on:
 jobs:
   core:
     runs-on: ubuntu-latest
-    # Ядро появляется на этапе 1; до этого job пропускается.
-    if: hashFiles('core/go.mod') != ''
     steps:
       - uses: actions/checkout@v4
+      # Ядро появляется на этапе 1; до этого шаги пропускаются (hashFiles доступен только в шагах).
       - uses: actions/setup-go@v5
+        if: hashFiles('core/go.mod') != ''
         with:
           go-version-file: core/go.mod
           cache-dependency-path: core/go.sum
       - name: Тесты Go-ядра
+        if: hashFiles('core/go.mod') != ''
         working-directory: core
         run: go vet ./... && go test -race ./...
 
