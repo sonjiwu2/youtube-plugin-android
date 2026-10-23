@@ -128,8 +128,12 @@ func (r *Resolver) Resolve(ctx context.Context, host string) ([]net.IP, error) {
 					clear(r.cache)
 				}
 				r.cache[host] = dnsEntry{a.ips, time.Now().Add(a.ttl)}
-				if r.sources == nil { r.sources = map[string]string{} }
-				if len(r.sources) > 2048 { clear(r.sources) }
+				if r.sources == nil {
+					r.sources = map[string]string{}
+				}
+				if len(r.sources) > 2048 {
+					clear(r.sources)
+				}
 				r.sources[host] = a.source
 				r.mu.Unlock()
 				return a.ips, nil
@@ -195,7 +199,9 @@ func (r *Resolver) fallbackFor(host string) ([]net.IP, error) {
 			clear(r.cache)
 		}
 		r.cache[host] = dnsEntry{Until: time.Now().Add(10 * time.Second)}
-		if r.sources != nil { r.sources[host] = r.preferred }
+		if r.sources != nil {
+			r.sources[host] = r.preferred
+		}
 		r.mu.Unlock()
 		return nil, fmt.Errorf("DoH unavailable for %s", host)
 	}
@@ -204,7 +210,9 @@ func (r *Resolver) fallbackFor(host string) ([]net.IP, error) {
 		clear(r.cache)
 	}
 	r.cache[host] = dnsEntry{IPs: ips, Until: time.Now().Add(30 * time.Second)}
-	if r.sources != nil { r.sources[host] = r.preferred }
+	if r.sources != nil {
+		r.sources[host] = r.preferred
+	}
 	r.mu.Unlock()
 	return ips, nil
 }
