@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "strategies": [
+    {"id":"split-1","name":"Разрез TLS · 1","args":["-s","1"]},
+    {"id":"disorder-1","name":"Обратный порядок · 1","args":["-d","1"]},
+    {"id":"tlsrec-sni","name":"TLS-рекорды по SNI","args":["-r","1+s","-s","1"]},
+    {"id":"split-sni","name":"Разрез по имени сервера","args":["-s","1+s"]},
+    {"id":"disorder-sni","name":"Обратный порядок по SNI","args":["-d","1+s"]},
+    {"id":"oob-sni","name":"Внеполосный байт","args":["-o","1+s"]},
+    {"id":"fake-8","name":"Google TLS · TTL 8","args":["-f","-1","-t","8","-n","www.google.com","-l","@google"]},
+    {"id":"fake-5","name":"Google TLS · TTL 5","args":["-f","-1","-t","5","-n","www.google.com","-l","@google"]}
+  ],
+  "fallback": {
+    "m.youtube.com": ["142.250.185.206", "142.250.74.206"],
+    "www.youtube.com": ["142.250.185.206", "142.250.74.206"],
+    "youtubei.googleapis.com": ["142.250.185.202"]
+  }
+}
