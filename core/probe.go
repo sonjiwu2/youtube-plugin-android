@@ -66,7 +66,7 @@ func (e *Engine) probeLoop(check func(context.Context, *childProcess) error) {
 		id, p := e.status.StrategyID, e.child
 		ctx, cancel := context.WithTimeout(e.ctx, 12*time.Second)
 		e.probeCancel = cancel
-		e.eventLocked(id, "Проверка HTTPS m.youtube.com")
+		e.eventLocked(id, "Проверка HTTPS YouTube и API воспроизведения")
 		e.mu.Unlock()
 		err := check(ctx, p)
 		cancel()
@@ -81,8 +81,10 @@ func (e *Engine) probeLoop(check func(context.Context, *childProcess) error) {
 			e.status.State = "ready"
 			e.status.Error = ""
 			e.bad = 0
-			e.eventLocked(id, "YouTube: HTTPS 200, HTML получен")
-			e.saveStrategyLocked(id)
+			e.eventLocked(id, "YouTube: HTML 200 и API 405 получены; видеопоток проверяется отдельно")
+			if !e.opts.VPN {
+				e.saveStrategyLocked(id)
+			}
 			e.mu.Unlock()
 		} else {
 			e.status.Error = "Проверка YouTube: " + err.Error()
@@ -100,10 +102,19 @@ func (e *Engine) probeLoop(check func(context.Context, *childProcess) error) {
 }
 
 func (e *Engine) probeYouTube(ctx context.Context, p *childProcess) error {
+	for _, host := range []string{"m.youtube.com", "youtubei.googleapis.com"} {
+		if err := e.probeEndpoint(ctx, p, host); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *Engine) probeEndpoint(ctx context.Context, p *childProcess, host string) error {
 	if !e.opts.Direct && p == nil {
 		return errors.New("движок недоступен")
 	}
-	ips, err := e.resolver.Resolve(ctx, "m.youtube.com")
+	ips, err := e.resolver.Resolve(ctx, host)
 	if err != nil {
 		return err
 	}
@@ -122,7 +133,7 @@ func (e *Engine) probeYouTube(ctx context.Context, p *childProcess) error {
 				if err != nil {
 					return nil, err
 				}
-				t := tls.Client(c, &tls.Config{ServerName: "m.youtube.com", MinVersion: tls.VersionTLS12})
+				t := tls.Client(c, &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12})
 				if err = t.HandshakeContext(ctx); err != nil {
 					c.Close()
 					return nil, err
@@ -133,18 +144,34 @@ func (e *Engine) probeYouTube(ctx context.Context, p *childProcess) error {
 				return nil, err
 			}
 			winner := c.(*probedConn)
-			e.resolver.prefer("m.youtube.com", winner.ip)
+			e.resolver.prefer(host, winner.ip)
 			return winner.Conn, nil
 		}}
 	defer tr.CloseIdleConnections()
 	client := &http.Client{Transport: tr, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
-	req, _ := http.NewRequestWithContext(ctx, "GET", "https://m.youtube.com/", nil)
+	path := "/"
+	if host == "youtubei.googleapis.com" {
+		path = "/youtubei/v1/browse"
+	}
+	req, _ := http.NewRequestWithContext(ctx, "GET", "https://"+host+path, nil)
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36")
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
+	if host == "youtubei.googleapis.com" {
+		// GET is deliberately unsupported; a real JSON 405 proves the native API
+		// route works without needing an account, API key or a saved video URL.
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 65536))
+		if err != nil {
+			return err
+		}
+		if resp.StatusCode != 405 || !strings.Contains(string(body), "error") {
+			return fmt.Errorf("YouTube API: HTTP %d", resp.StatusCode)
+		}
+		return nil
+	}
 	return validateYouTubeResponse(resp)
 }
 

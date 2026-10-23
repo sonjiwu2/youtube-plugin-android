@@ -40,6 +40,8 @@ type Status struct {
 	Update        string  `json:"update"`
 	Error         string  `json:"error"`
 	Verified      bool    `json:"verified"`
+	VideoBytes    int64   `json:"videoBytes"`
+	VideoStreams  int     `json:"videoStreams"`
 }
 type Engine struct {
 	mu          sync.Mutex
@@ -60,6 +62,7 @@ type Engine struct {
 	probeWake   chan struct{}
 	probeCancel context.CancelFunc
 	events      []diagnosticEvent
+	lastVideo   time.Time
 }
 
 func Start(opts Options) (*Engine, error) {
@@ -260,11 +263,12 @@ func (e *Engine) handle(c net.Conn) {
 	// CONNECT задаёт адрес назначения. ECH может использовать другое внешнее SNI;
 	// проверку сертификата и подлинности сервера выполняет сам браузер.
 	_ = sni
-	e.forwardTLS(c, host, ips, hello, target, adaptive)
+	e.forwardTLS(c, host, ips, hello, target, adaptive, !e.opts.VPN)
 }
 
 // forwardTLS preserves the application's TLS stream and certificate validation.
-func (e *Engine) forwardTLS(c net.Conn, host string, ips []net.IP, hello []byte, target, adaptive bool) {
+func (e *Engine) forwardTLS(c net.Conn, host string, ips []net.IP, hello []byte, target, adaptive, counted bool) {
+	helloLength := len(hello)
 	var err error
 	var id string
 	var upstream net.Conn
@@ -299,6 +303,29 @@ func (e *Engine) forwardTLS(c net.Conn, host string, ips []net.IP, hello []byte,
 		e.failure(id, adaptive)
 		return
 	}
+	// Native YouTube can retain DNS answers across VPN switches, or reach a
+	// frontend whose TCP port works while TLS is filtered. The WebView proxy
+	// resolved the hostname for every new connection; restore that resilience.
+	if e.opts.VPN && counted && MatchHost(host, DefaultHosts) {
+		upstream, err = firstTLSFlight(ctx, upstream, hello, func(ctx context.Context) []net.IP {
+			resolved, _ := e.resolver.Resolve(ctx, host)
+			return resolved
+		}, func(ctx context.Context, ip net.IP) (net.Conn, error) {
+			if e.opts.Direct {
+				return (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(ip.String(), "443"))
+			}
+			return dialSOCKS(ctx, p.addr, ip, 443)
+		})
+		if err != nil {
+			e.noteError(id, host+": TLS маршруты: "+err.Error())
+			if e.ctx.Err() == nil {
+				e.resolver.retryAfterFailure(host)
+			}
+			e.failure(id, adaptive)
+			return
+		}
+		hello = nil // already sent once on the winning connection
+	}
 	e.mu.Lock()
 	if e.ctx.Err() != nil {
 		e.mu.Unlock()
@@ -313,18 +340,30 @@ func (e *Engine) forwardTLS(c net.Conn, host string, ips []net.IP, hello []byte,
 		e.failure(id, adaptive)
 		return
 	}
-	e.addUpload(len(hello))
+	if counted {
+		e.addUpload(helloLength)
+	}
 	upstream.SetWriteDeadline(time.Time{})
 	c.SetDeadline(time.Time{})
 	done := make(chan struct{})
 	clientEnded := make(chan struct{}, 1)
 	go func() {
-		io.Copy(upstream, uploadReader{c, e})
+		var input io.Reader = c
+		if counted {
+			input = uploadReader{c, e}
+		}
+		io.Copy(upstream, input)
 		clientEnded <- struct{}{}
 		upstream.Close()
 		close(done)
 	}()
-	bytes, speed, readErr := e.copyDown(c, upstream, MatchHost(host, []string{"googlevideo.com"}), id)
+	video := counted && MatchHost(host, []string{"googlevideo.com"})
+	bytes, speed, readErr := e.copyDown(c, upstream, video, id, counted)
+	if counted && (video || bytes == 0) {
+		e.mu.Lock()
+		e.eventLocked(id, fmt.Sprintf("Поток %s: принято %d байт; завершение: %v", host, bytes, readErr))
+		e.mu.Unlock()
+	}
 	clientCancelled := false
 	select {
 	case <-clientEnded:
@@ -381,14 +420,20 @@ func (e *Engine) noteError(id, message string) {
 	}
 }
 
-func (e *Engine) copyDown(dst, src net.Conn, video bool, id string) (int64, float64, error) {
+func (e *Engine) copyDown(dst, src net.Conn, video bool, id string, counted bool) (int64, float64, error) {
 	buf := make([]byte, 32768)
 	var total int64
 	var start time.Time
 	var speed float64
 	sampled := false
 	for {
-		src.SetReadDeadline(time.Now().Add(18 * time.Second))
+		idle := 18 * time.Second
+		// HTTP/2 video is fetched in bursts. A full playback buffer can leave a
+		// healthy connection idle for minutes; do not tear it down after 18 s.
+		if total > 0 {
+			idle = 5 * time.Minute
+		}
+		src.SetReadDeadline(time.Now().Add(idle))
 		n, err := src.Read(buf)
 		if n > 0 {
 			if start.IsZero() {
@@ -400,7 +445,16 @@ func (e *Engine) copyDown(dst, src net.Conn, video bool, id string) (int64, floa
 				return total, speed, w
 			}
 			e.mu.Lock()
-			e.status.Total += int64(n)
+			if counted {
+				e.status.Total += int64(n)
+			}
+			if video {
+				e.status.VideoBytes += int64(n)
+				e.lastVideo = time.Now()
+				if total == int64(n) {
+					e.status.VideoStreams++
+				}
+			}
 			if total >= 1024 && e.status.StrategyID == id && e.status.State != "blocked" && !e.opts.AutoProbe {
 				e.status.State = "ready"
 			}
@@ -436,11 +490,17 @@ func (e *Engine) failure(id string, target bool) {
 	}
 	e.bad++
 	change := e.bad >= 3
+	if e.opts.VPN && !e.lastVideo.IsZero() && time.Since(e.lastVideo) < 45*time.Second {
+		change = false // Never tear down active playback for an unrelated failure.
+	}
 	if e.opts.AutoProbe && !e.status.Verified {
 		change = false
 	}
 	e.mu.Unlock()
 	if change {
+		e.mu.Lock()
+		e.eventLocked(id, "Смена стратегии: три ошибки соединений воспроизведения, активного видеопотока нет")
+		e.mu.Unlock()
 		e.next(id)
 	}
 }

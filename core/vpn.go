@@ -46,6 +46,9 @@ func (e *Engine) PrepareTCP(parent context.Context, destination net.IP, port uin
 				c, err = dialCandidates(ctx, alternate, dial)
 			}
 		}
+		if err != nil {
+			e.noteError(id, "VPN TCP "+destination.String()+": "+err.Error())
+		}
 		return c, id, err
 	}
 	c, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(destination.String(), strconv.Itoa(int(port))))
@@ -124,7 +127,13 @@ func (e *Engine) ServeTCP(c net.Conn, destination net.IP, port uint16) {
 	}
 	// The original destination is authoritative, including ECH outer names.
 	// All TLS from YouTube uses desync, including account and image endpoints.
-	e.forwardTLS(c, host, e.resolver.candidates(host, destination), hello, true, MatchHost(host, DefaultHosts))
+	// Analytics (notably s.youtube.com) may be rejected or cancelled independently
+	// of playback. They must not restart the VPN and close every video stream.
+	e.forwardTLS(c, host, e.resolver.candidates(host, destination), hello, true, playbackHost(host), true)
+}
+
+func playbackHost(host string) bool {
+	return MatchHost(host, []string{"googlevideo.com", "youtubei.googleapis.com", "youtubei.youtube.com"})
 }
 
 func (e *Engine) StrategiesJSON() string {
