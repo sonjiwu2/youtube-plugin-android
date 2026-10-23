@@ -16,7 +16,10 @@ import (
 	"github.com/xjasonlyu/tun2socks/v2/core/device"
 	"github.com/xjasonlyu/tun2socks/v2/core/device/fdbased"
 	"golang.org/x/sys/unix"
+	"gvisor.dev/gvisor/pkg/tcpip/adapters/gonet"
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
+	"gvisor.dev/gvisor/pkg/tcpip/transport/udp"
+	"gvisor.dev/gvisor/pkg/waiter"
 )
 
 type vpnTunnel struct {
@@ -55,8 +58,32 @@ func startTunnel(fd int, engine *core.Engine) (*vpnTunnel, error) {
 		return nil, err
 	}
 	t.stack = s
+	// Return unhandled for QUIC so netstack emits ICMP port-unreachable. Merely
+	// dropping UDP makes clients wait through QUIC timeouts before trying TCP.
+	dnsForwarder := udp.NewForwarder(s, func(r *udp.ForwarderRequest) bool {
+		var queue waiter.Queue
+		endpoint, err := r.CreateEndpoint(&queue)
+		if err != nil {
+			return false
+		}
+		t.HandleUDP(&dnsConnection{UDPConn: gonet.NewUDPConn(&queue, endpoint), id: r.ID()})
+		return true
+	})
+	s.SetTransportProtocolHandler(udp.ProtocolNumber, func(id stack.TransportEndpointID, packet *stack.PacketBuffer) bool {
+		if id.LocalPort != 53 {
+			return false
+		}
+		return dnsForwarder.HandlePacket(id, packet)
+	})
 	return t, nil
 }
+
+type dnsConnection struct {
+	*gonet.UDPConn
+	id stack.TransportEndpointID
+}
+
+func (c *dnsConnection) ID() stack.TransportEndpointID { return c.id }
 
 func (t *vpnTunnel) handle(c net.Conn, run func()) {
 	t.mu.Lock()
