@@ -454,11 +454,16 @@ func (e *Engine) copyDown(dst, src net.Conn, video bool, id string, counted bool
 				e.status.Total += int64(n)
 			}
 			if video {
-				e.status.VideoBytes += int64(n)
-				if total >= 32768 {
+				// A burst of failed TLS handshakes must not masquerade as video.
+				// Without decrypting HTTPS, conservatively exclude the first 32 KiB
+				// of each CDN connection from the video-data health counter.
+				before := max(int64(0), total-int64(n)-32768)
+				after := max(int64(0), total-32768)
+				e.status.VideoBytes += after - before
+				if after > 0 {
 					e.lastVideo = time.Now()
 				}
-				if total == int64(n) {
+				if before == 0 && after > 0 {
 					e.status.VideoStreams++
 				}
 			}
