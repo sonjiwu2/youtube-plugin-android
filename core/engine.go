@@ -304,6 +304,10 @@ func (e *Engine) forwardTLS(c net.Conn, host string, ips []net.IP, hello []byte,
 		e.failure(id, adaptive)
 		return
 	}
+	if p == nil && !e.opts.Direct {
+		upstream.Close()
+		return
+	}
 	// Native YouTube can retain DNS answers across VPN switches, or reach a
 	// frontend whose TCP port works while TLS is filtered. The WebView proxy
 	// resolved the hostname for every new connection; restore that resilience.
@@ -328,7 +332,7 @@ func (e *Engine) forwardTLS(c net.Conn, host string, ips []net.IP, hello []byte,
 		hello = nil // already sent once on the winning connection
 	}
 	e.mu.Lock()
-	if e.ctx.Err() != nil {
+	if e.ctx.Err() != nil || e.status.StrategyID != id || e.status.State == "blocked" {
 		e.mu.Unlock()
 		upstream.Close()
 		return
@@ -431,7 +435,7 @@ func (e *Engine) copyDown(dst, src net.Conn, video bool, id string, counted bool
 		idle := 18 * time.Second
 		// HTTP/2 video is fetched in bursts. A full playback buffer can leave a
 		// healthy connection idle for minutes; do not tear it down after 18 s.
-		if total > 0 {
+		if total > 0 && (!video || total >= 32768) {
 			idle = 5 * time.Minute
 		}
 		src.SetReadDeadline(time.Now().Add(idle))

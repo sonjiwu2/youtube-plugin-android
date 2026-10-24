@@ -55,3 +55,40 @@ func TestConcurrentCDNDNSLookupsShareBoundedTLSConnections(t *testing.T) {
 		t.Fatal("transport was recreated per query")
 	}
 }
+
+func TestUnreachableDNSAnswerCannotWinAgainByReplyingFaster(t *testing.T) {
+	var badQueries atomic.Int32
+	origin := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Host == "example.com" {
+			badQueries.Add(1)
+		}
+		io.WriteString(w, `{"Status":0,"Answer":[{"type":1,"TTL":60,"data":"142.250.74.206"}]}`)
+	}))
+	defer origin.Close()
+	r := NewResolver(nil)
+	defer r.closeIdle()
+	r.providers = []dohProvider{{"example.com", "8.8.8.8", "/dns-query"}, {"alternate.example", "1.1.1.1", "/dns-query"}}
+	for _, p := range r.providers {
+		tr := r.transport(p, false)
+		roots := x509.NewCertPool()
+		roots.AddCert(origin.Certificate())
+		tr.TLSClientConfig = &tls.Config{RootCAs: roots, ServerName: "example.com", MinVersion: tls.VersionTLS12}
+		tr.DialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "tcp", origin.Listener.Addr().String())
+		}
+	}
+	r.sources["youtubei.googleapis.com"] = "example.com"
+	r.retryAfterFailure("youtubei.googleapis.com")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	ips, err := r.Resolve(ctx, "youtubei.googleapis.com")
+	if err != nil || len(ips) == 0 {
+		t.Fatal(ips, err)
+	}
+	if badQueries.Load() != 0 {
+		t.Fatal("the rejected resolver raced and won again")
+	}
+	if r.sources["youtubei.googleapis.com"] != "alternate.example" {
+		t.Fatal("did not use the alternate source")
+	}
+}

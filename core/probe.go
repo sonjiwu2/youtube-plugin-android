@@ -24,6 +24,14 @@ type probedConn struct {
 	ip net.IP
 }
 
+type endpointError struct {
+	host string
+	err  error
+}
+
+func (e *endpointError) Error() string { return e.host + ": " + e.err.Error() }
+func (e *endpointError) Unwrap() error { return e.err }
+
 func (e *Engine) eventLocked(id, message string) {
 	if len(message) > 700 {
 		message = message[:700]
@@ -111,9 +119,15 @@ func (e *Engine) probeLoop(check func(context.Context, *childProcess) error) {
 			}
 			e.mu.Unlock()
 			if e.resolver != nil {
-				e.resolver.retryAfterFailure("m.youtube.com")
-				if !retried[id] {
-					retried[id] = true
+				host := "m.youtube.com"
+				var endpoint *endpointError
+				if errors.As(err, &endpoint) {
+					host = endpoint.host
+				}
+				e.resolver.retryAfterFailure(host)
+				key := id + "/" + host
+				if !retried[key] {
+					retried[key] = true
 					e.mu.Lock()
 					e.eventLocked(id, "Повторная проверка той же стратегии через резервный DNS")
 					e.mu.Unlock()
@@ -129,7 +143,7 @@ func (e *Engine) probeLoop(check func(context.Context, *childProcess) error) {
 func (e *Engine) probeYouTube(ctx context.Context, p *childProcess) error {
 	for _, host := range []string{"m.youtube.com", "youtubei.googleapis.com"} {
 		if err := e.probeEndpoint(ctx, p, host); err != nil {
-			return err
+			return &endpointError{host, err}
 		}
 	}
 	return nil

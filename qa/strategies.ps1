@@ -26,6 +26,14 @@ function Player([string]$Target) {
         if ($dump -match 'dumped') {
             Android @('pull','/sdcard/qa-player.xml',$Target) | Out-Null
             [xml]$tree = Get-Content $Target -Raw
+			if ($tree.SelectNodes('//node') | Where-Object {$_.text -eq "System UI isn't responding"}) {
+				$wait = $tree.SelectNodes('//node') | Where-Object {$_.text -eq 'Wait'} | Select-Object -First 1
+				if ($wait) {
+					$p = [regex]::Matches($wait.bounds,'\d+') | ForEach-Object {[int]$_.Value}
+					Android @('shell','input','tap',"$(($p[0]+$p[2])/2)","$(($p[1]+$p[3])/2)") | Out-Null
+					continue
+				}
+			}
             $node = $tree.SelectNodes('//node') | Where-Object { $_.'content-desc' -match '^((\d+) minutes? )?(\d+) seconds? of ' } | Select-Object -First 1
             $seconds = $null
             if ($node -and $node.'content-desc' -match '^((\d+) minutes? )?(\d+) seconds? of ') { $seconds = 60 * [int]$Matches[2] + [int]$Matches[3] }
@@ -47,7 +55,7 @@ foreach ($strategy in $strategies) {
     Android @('shell','pm','trim-caches','1000G','internal') | Out-Null
     Android @('shell','run-as','ru.razgon.app','rm','-f','cache/vpn-diagnostics.json') | Out-Null
     Android @('shell','am','start','-n','ru.razgon.app/.QaActivity','--es','strategy',$id) | Out-Null
-    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    $deadline = [DateTime]::UtcNow.AddSeconds(45)
     $diag = $null
     do {
         Start-Sleep -Seconds 1

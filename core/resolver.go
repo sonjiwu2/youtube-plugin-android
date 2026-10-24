@@ -26,6 +26,7 @@ type Resolver struct {
 	providers     []dohProvider
 	preferred     string
 	sources       map[string]string
+	rejected      map[string]string
 	fallback      map[string][]string
 	inflight      map[string]chan struct{}
 	lastErrors    map[string]string
@@ -101,6 +102,17 @@ func (r *Resolver) Resolve(ctx context.Context, host string) ([]net.IP, error) {
 	}
 	r.mu.Lock()
 	providers := append([]dohProvider{}, r.providers...)
+	if bad := r.rejected[host]; bad != "" {
+		var alternatives []dohProvider
+		for _, p := range providers {
+			if p.Host != bad {
+				alternatives = append(alternatives, p)
+			}
+		}
+		if len(alternatives) > 0 {
+			providers = alternatives
+		}
+	}
 	preferred := r.preferred
 	if preferred == "" && len(providers) > 0 {
 		preferred = providers[0].Host
@@ -175,6 +187,13 @@ func (r *Resolver) retryAfterFailure(host string) {
 	if source == "" && len(r.providers) > 0 {
 		source = r.providers[0].Host
 	}
+	if r.rejected == nil {
+		r.rejected = map[string]string{}
+	}
+	if len(r.rejected) > 2048 {
+		clear(r.rejected)
+	}
+	r.rejected[normalizeHost(host)] = source
 	if r.preferred == "" || r.preferred == source {
 		for _, p := range r.providers {
 			if p.Host != source {

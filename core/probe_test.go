@@ -19,11 +19,13 @@ func TestProbeRetriesDNSBeforeDiscardingManualStrategy(t *testing.T) {
 	}
 	defer e.Stop()
 	id := e.Snapshot().StrategyID
+	e.resolver.sources["m.youtube.com"] = "cloudflare-dns.com"
+	e.resolver.sources["youtubei.googleapis.com"] = "dns.google"
 	var calls atomic.Int32
 	e.wg.Add(1)
 	go e.probeLoop(func(context.Context, *childProcess) error {
 		if calls.Add(1) == 1 {
-			return errors.New("temporary DNS route failure")
+			return &endpointError{"youtubei.googleapis.com", errors.New("temporary DNS route failure")}
 		}
 		return nil
 	})
@@ -35,6 +37,9 @@ func TestProbeRetriesDNSBeforeDiscardingManualStrategy(t *testing.T) {
 	s := e.Snapshot()
 	if !s.Verified || s.State != "ready" || s.StrategyID != id || s.Attempts != 1 || calls.Load() != 2 {
 		t.Fatalf("a DNS hiccup discarded the preset: %+v calls=%d", s, calls.Load())
+	}
+	if e.resolver.rejected["youtubei.googleapis.com"] != "dns.google" || e.resolver.rejected["m.youtube.com"] != "" {
+		t.Fatal("API failure retried the homepage's DNS source")
 	}
 }
 
