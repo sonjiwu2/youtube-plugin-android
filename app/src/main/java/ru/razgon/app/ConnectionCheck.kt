@@ -43,7 +43,7 @@ object ConnectionCheck {
         val initial = withContext(Dispatchers.IO) { controller.status() }
         var previous = initial
         var previousAt = started
-        var down = 0L; var up = 0L; var video = 0L; var peak = 0.0; var active = 0
+        var down = 0L; var up = 0L; var video = 0L; var peak = 0.0; var active = 0; var changes = 0
         val samples = JSONArray()
         val endpoints = async(Dispatchers.IO) { runCatching { JSONObject(controller.checkConnectivity()) }
             .getOrElse { JSONObject().put("error", it.message ?: "Проверка недоступна") } }
@@ -59,6 +59,7 @@ object ConnectionCheck {
                 video += delta(current.videoBytes, previous.videoBytes)
                 peak = max(peak, received * 1000.0 / max(1, now - previousAt))
                 if (received > 0) active++
+                if (current.strategyId.isNotEmpty() && previous.strategyId.isNotEmpty() && current.strategyId != previous.strategyId) changes++
                 samples.put(JSONObject().put("second", (now-started)/1000).put("received", received)
                     .put("videoReceived", delta(current.videoBytes, previous.videoBytes))
                     .put("strategyId", current.strategyId).put("state", current.state))
@@ -90,6 +91,7 @@ object ConnectionCheck {
                     .put("downloadedBytes", down).put("uploadedBytes", up).put("videoBytes", video)
                     .put("videoDataReceived", !interrupted && video >= 131_072)
                     .put("peakBytesPerSecond", peak).put("activeSamples", active)
+                    .put("strategyChanges", changes)
                     .put("network", network).put("samples", samples)
                 runCatching { save(context, report) }.onFailure {
                     state.value = CheckState(summary = summary, report = report.toString(2))
@@ -112,6 +114,7 @@ object ConnectionCheck {
             "Приём: ${sizeText(json.optLong("downloadedBytes"))}",
             "Передача: ${sizeText(json.optLong("uploadedBytes"))}",
             "Пиковая скорость: ${speedText(json.optDouble("peakBytesPerSecond", 0.0))} Мбит/с",
+            "Смен стратегии: ${json.optInt("strategyChanges")}",
             "Время проверки: ${json.optLong("durationSeconds")} с")).joinToString("\n")
     }.getOrDefault("")
 }
