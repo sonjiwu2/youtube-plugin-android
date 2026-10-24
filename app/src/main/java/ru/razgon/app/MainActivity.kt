@@ -113,7 +113,7 @@ class MainActivity : ComponentActivity() {
     }
     private fun shareDiagnostics() {
         val state = PluginState.mutable.value
-        val report = "Youtube Plugin ${BuildConfig.VERSION_NAME}\nAndroid ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})\n${Build.MANUFACTURER} ${Build.MODEL}\nСостояние: ${state.state}\nСтратегия: ${config.strategy}\nDNS: ${config.dns}\n${state.error}\n${PluginState.diagnostics}"
+        val report = "Youtube Plugin ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})\nAndroid ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})\n${Build.MANUFACTURER} ${Build.MODEL}\nСостояние: ${state.state}\nСтратегия: ${config.strategy}\nDNS: ${config.dns}\n${state.error}\n${PluginState.diagnostics}"
         launch(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, report) }, "Отчёт о подключении"))
     }
     @Composable private fun Dashboard() {

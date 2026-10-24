@@ -21,7 +21,7 @@ function Diagnostic {
     catch { return $null }
 }
 function Player([string]$Target) {
-    for ($retry = 0; $retry -lt 3; $retry++) {
+    for ($retry = 0; $retry -lt 8; $retry++) {
         $dump = Android @('shell','uiautomator','dump','/sdcard/qa-player.xml')
         if ($dump -match 'dumped') {
             Android @('pull','/sdcard/qa-player.xml',$Target) | Out-Null
@@ -34,6 +34,16 @@ function Player([string]$Target) {
 					continue
 				}
 			}
+            if ($tree.SelectNodes('//node') | Where-Object {$_.text -match '^Before you continue to YouTube$'}) {
+                $reject = $tree.SelectNodes('//node') | Where-Object {($_.text -eq 'Reject all' -or $_.'content-desc' -eq 'Reject all') -and $_.bounds -ne '[0,0][0,0]'} | Select-Object -First 1
+                if ($reject) {
+                    $p = [regex]::Matches($reject.bounds,'\d+') | ForEach-Object {[int]$_.Value}
+                    Android @('shell','input','tap',"$(($p[0]+$p[2])/2)","$(($p[1]+$p[3])/2)") | Out-Null
+                } else {
+                    Android @('shell','input','swipe','600','1100','600','400','350') | Out-Null
+                }
+                continue
+            }
             $node = $tree.SelectNodes('//node') | Where-Object { $_.'content-desc' -match '^((\d+) minutes? )?(\d+) seconds? of ' } | Select-Object -First 1
             $seconds = $null
             if ($node -and $node.'content-desc' -match '^((\d+) minutes? )?(\d+) seconds? of ') { $seconds = 60 * [int]$Matches[2] + [int]$Matches[3] }
@@ -65,6 +75,11 @@ foreach ($strategy in $strategies) {
     $startVideo = 0
     if ($diag) { $startVideo = [long]$diag.status.videoBytes }
     # Opening the real app is attempted even when the availability probe failed.
+    Android @('shell','am','start','-a','android.intent.action.VIEW','-d','https://www.youtube.com/watch?v=YE7VzlLtp-4','-p','com.google.android.youtube') | Out-Null
+    Start-Sleep -Seconds 3
+    $initial = Player (Join-Path $folder "$id-open.xml")
+    # A consent WebView can hide an already prefetching player. Dismiss only
+    # optional cookies on the disposable AVD, then explicitly reopen the clip.
     Android @('shell','am','start','-a','android.intent.action.VIEW','-d','https://www.youtube.com/watch?v=YE7VzlLtp-4','-p','com.google.android.youtube') | Out-Null
     $started = [DateTime]::UtcNow
     $firstPlayer = $null
