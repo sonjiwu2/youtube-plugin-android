@@ -43,6 +43,34 @@ func TestProbeRetriesDNSBeforeDiscardingManualStrategy(t *testing.T) {
 	}
 }
 
+func TestFailedControlProbePreservesActiveNativePlayback(t *testing.T) {
+	e, err := Start(Options{Direct: true, VPN: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Stop()
+	id := e.Snapshot().StrategyID
+	e.mu.Lock()
+	e.status.VideoBytes = firstChunk + 1
+	e.lastVideo = time.Now()
+	e.mu.Unlock()
+	var calls atomic.Int32
+	e.wg.Add(1)
+	go e.probeLoop(func(context.Context, *childProcess) error {
+		calls.Add(1)
+		return errors.New("control API timed out while the CDN is flowing")
+	})
+	e.wakeProbe()
+	deadline := time.Now().Add(time.Second)
+	for !e.Snapshot().Verified && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	s := e.Snapshot()
+	if !s.Verified || s.State != "ready" || s.StrategyID != id || s.Attempts != 1 || calls.Load() != 1 {
+		t.Fatal("control check interrupted playback", s)
+	}
+}
+
 func TestProbeSelectionAndExhaustion(t *testing.T) {
 	for _, success := range []bool{true, false} {
 		ctx, cancel := context.WithCancel(context.Background())

@@ -111,6 +111,16 @@ func (e *Engine) probeLoop(check func(context.Context, *childProcess) error) {
 				e.saveStrategyLocked(id)
 			}
 			e.mu.Unlock()
+		} else if e.opts.VPN && e.status.VideoBytes >= firstChunk && !e.lastVideo.IsZero() && time.Since(e.lastVideo) < 45*time.Second {
+			// Native playback is stronger evidence than an unrelated control
+			// request. A DNS/API probe must never reset a flowing CDN connection.
+			e.status.Verified = true
+			e.status.State = "ready"
+			e.status.Error = ""
+			e.bad = 0
+			e.eventLocked(id, "Контрольный запрос не прошёл, но активный видеопоток подтверждён; сохраняем соединения")
+			e.saveStrategyLocked(id)
+			e.mu.Unlock()
 		} else {
 			e.status.Error = "Проверка YouTube: " + err.Error()
 			e.eventLocked(id, e.status.Error)
