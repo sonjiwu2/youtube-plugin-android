@@ -24,6 +24,7 @@ class PluginVpnService : VpnService() {
     private val settings by lazy { SettingsStore(this) }
     private val controller by lazy { EngineController(this) }
     private var worker: Job? = null
+    private var checkJob: Job? = null
     private var descriptor: ParcelFileDescriptor? = null
     private var restartRequested = false
     private var notified = ""
@@ -52,6 +53,9 @@ class PluginVpnService : VpnService() {
         }
         if (intent?.action == RECONFIGURE) restartRequested = true
         if (worker == null) worker = scope.launch { runConnection() }
+        if (intent?.action == CHECK && checkJob?.isActive != true) checkJob = scope.launch {
+            ConnectionCheck.run(this@PluginVpnService, controller, settings)
+        }
         refreshTile(this)
         return START_STICKY
     }
@@ -204,6 +208,7 @@ class PluginVpnService : VpnService() {
         const val YOUTUBE = "com.google.android.youtube"
         const val STOP = "ru.razgon.app.STOP"
         const val RECONFIGURE = "ru.razgon.app.RECONFIGURE"
+        private const val CHECK = "ru.razgon.app.CHECK"
         private const val CHANNEL = "connection"
         private const val NOTIFICATION = 43
         fun start(context: Context, reconfigure: Boolean = false) {
@@ -213,6 +218,9 @@ class PluginVpnService : VpnService() {
             SettingsStore(context).boolean("enabled", false)
             // The service owns teardown; closing the activity never touches it.
             context.startService(Intent(context, PluginVpnService::class.java).setAction(STOP))
+        }
+        fun check(context: Context) {
+            ContextCompat.startForegroundService(context, Intent(context, PluginVpnService::class.java).setAction(CHECK))
         }
         fun refreshTile(context: Context) = TileService.requestListeningState(context, ComponentName(context, QuickTileService::class.java))
     }

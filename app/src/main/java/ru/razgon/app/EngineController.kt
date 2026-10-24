@@ -11,12 +11,13 @@ data class EngineStatus(
     val state: String = "stopped", val strategy: String = "", val strategyId: String = "",
     val downloaded: Long = 0, val uploaded: Long = 0, val attempts: Int = 0,
     val update: String = "", val error: String = "", val verified: Boolean = false,
+    val videoBytes: Long = 0,
 )
 data class StrategyChoice(val id: String, val name: String)
 
 // Owned exclusively by PluginVpnService, never by the activity.
 class EngineController(private val context: Context) {
-    private var engine: Engine? = null
+    @Volatile private var engine: Engine? = null
     fun start(fd: Int, profile: String, settings: PluginSettings) {
         check(engine == null)
         val next = Mobile.newEngine()
@@ -34,11 +35,12 @@ class EngineController(private val context: Context) {
     }
     fun stop() { engine?.stop(); engine = null }
     fun diagnostics(): String = engine?.diagnostics() ?: "Движок остановлен"
+    fun checkConnectivity(): String = engine?.checkConnectivity() ?: "{\"error\":\"Движок остановлен\",\"checks\":[]}"
     fun status(): EngineStatus {
         val json = JSONObject(engine?.status() ?: "{}")
         return EngineStatus(json.optString("state", "stopped"), json.optString("strategy"), json.optString("strategyId"),
             json.optLong("totalBytes"), json.optLong("uploadedBytes"), json.optInt("attempts"),
-            json.optString("update"), json.optString("error"), json.optBoolean("verified"))
+            json.optString("update"), json.optString("error"), json.optBoolean("verified"), json.optLong("videoBytes"))
     }
     fun strategies(): List<StrategyChoice> = parseStrategies(engine?.strategies() ?: Mobile.newEngine().strategies())
     companion object {

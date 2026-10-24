@@ -3,6 +3,8 @@ package ru.razgon.app
 import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -11,6 +13,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -67,6 +70,7 @@ class MainActivity : ComponentActivity() {
         store.preferences.registerOnSharedPreferenceChangeListener(listener)
         lifecycleScope.launch {
             PluginState.strategies.value = withContext(Dispatchers.IO) { EngineController(this@MainActivity).strategies() }
+            withContext(Dispatchers.IO) { ConnectionCheck.load(this@MainActivity) }
         }
         setContent { Dashboard() }
         handleIntent(intent)
@@ -111,9 +115,16 @@ class MainActivity : ComponentActivity() {
         val intent = packageManager.getLaunchIntentForPackage(PluginVpnService.YOUTUBE)
         if (intent != null) launch(intent) else message = "Установите официальное приложение YouTube."
     }
-    private fun shareDiagnostics() {
+    private fun diagnosticsReport(): String {
         val state = PluginState.mutable.value
-        val report = "Youtube Plugin ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})\nAndroid ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})\n${Build.MANUFACTURER} ${Build.MODEL}\nСостояние: ${state.state}\nСтратегия: ${config.strategy}\nDNS: ${config.dns}\n${state.error}\n${PluginState.diagnostics}"
+        return "Youtube Plugin ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})\nAndroid ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})\n${Build.MANUFACTURER} ${Build.MODEL}\nСостояние: ${state.state}\nСтратегия: ${config.strategy}\nDNS: ${config.dns}\n${state.error}\n${PluginState.diagnostics}\n\nПроверка YouTube:\n${ConnectionCheck.state.value.report.ifEmpty { "Ещё не запускалась" }}"
+    }
+    private fun copyDiagnostics() {
+        getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Youtube Plugin", diagnosticsReport()))
+        Toast.makeText(this, "Отчёт скопирован", Toast.LENGTH_SHORT).show()
+    }
+    private fun shareDiagnostics() {
+        val report = diagnosticsReport()
         launch(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, report) }, "Отчёт о подключении"))
     }
     @Composable private fun Dashboard() {
@@ -133,6 +144,7 @@ class MainActivity : ComponentActivity() {
         MaterialTheme(colorScheme = scheme) {
             val state by PluginState.connection.collectAsStateWithLifecycle()
             val choices by PluginState.strategies.collectAsStateWithLifecycle()
+            val check by ConnectionCheck.state.collectAsStateWithLifecycle()
             Surface(Modifier.fillMaxSize(), color = scheme.background) {
                 Column(Modifier.fillMaxSize().systemBarsPadding().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
                     Row(Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 22.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -146,6 +158,9 @@ class MainActivity : ComponentActivity() {
                             value = if (config.strategy == "auto") "Автоподбор" else "Вручную", onClick = { dialog = "strategy" })
                         RowDivider()
                         SettingRow("shield", "DNS", "Зашифрованные запросы", value = dnsName(config.dns), onClick = { dialog = "dns" })
+                        RowDivider()
+                        SettingRow("pulse", "Проверка YouTube", "Доступность и видеотрафик",
+                            value = if (check.running) "${check.remaining} с" else "Проверить", onClick = { dialog = "check" })
                     }
                     SectionLabel("Работа приложения")
                     SettingsCard {
@@ -181,6 +196,7 @@ class MainActivity : ComponentActivity() {
                             Spacer(Modifier.height(12.dp))
                             Text("Подключение сохраняется после закрытия этого экрана. Принудительная остановка Android, отзыв разрешения или другой VPN отключают сервис. Результат обхода зависит от оператора.")
                             TextButton(onClick = { dialog = "diagnostics" }) { Text("Диагностика подключения") }
+                            TextButton(onClick = { dialog = "check" }) { Text("Проверить работу YouTube") }
                             TextButton(onClick = { launch(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/sonjiwu2/youtube-plugin-android"))) }) { Text("Репозиторий на GitHub") }
                             TextButton(onClick = {
                                 lifecycleScope.launch {
@@ -191,6 +207,29 @@ class MainActivity : ComponentActivity() {
                         }
                     }, confirmButton = { TextButton(onClick = { dialog = "" }) { Text("Закрыть") } })
                     "licenses" -> AlertDialog(onDismissRequest = { dialog = "" }, title = { Text("Лицензии") }, text = { Text(licenseText, Modifier.verticalScroll(rememberScrollState()), fontSize = 12.sp) }, confirmButton = { TextButton(onClick = { dialog = "" }) { Text("Закрыть") } })
+                    "check" -> AlertDialog(onDismissRequest = { dialog = "" }, title = { Text("Проверка YouTube") }, text = {
+                        Column(Modifier.verticalScroll(rememberScrollState())) {
+                            Text(if (check.running) "Идёт проверка · осталось ${check.remaining} с" else check.summary, fontWeight = FontWeight.SemiBold)
+                            Spacer(Modifier.height(12.dp))
+                            if (check.report.isNotEmpty()) {
+                                Text(ConnectionCheck.details(check.report))
+                                TextButton(onClick = { copyDiagnostics() }) { Text("Скопировать отчёт") }
+                                Spacer(Modifier.height(12.dp))
+                            }
+                            Text("После запуска выберите ролик в обычном YouTube и оставьте его воспроизводиться 45 секунд. Затем вернитесь сюда и отправьте отчёт. Проверка продолжится в фоне.")
+                            Spacer(Modifier.height(8.dp))
+                            Text("Отчёт не содержит аккаунт, ссылки на ролики или содержимое трафика.", fontSize = 12.sp)
+                            if (!config.enabled) Text("Сначала включите подключение.", color = scheme.error)
+                        }
+                    }, confirmButton = { TextButton(enabled = config.enabled && state.state !in listOf("stopped", "starting", "error"), onClick = {
+                        if (!check.running) PluginVpnService.check(this@MainActivity)
+                        openYoutube()
+                    }) { Text(if (check.running) "Открыть YouTube" else "Начать и открыть YouTube") } }, dismissButton = {
+                        Row {
+                            if (check.report.isNotEmpty()) TextButton(onClick = { shareDiagnostics() }) { Text("Отправить отчёт") }
+                            TextButton(onClick = { dialog = "" }) { Text("Закрыть") }
+                        }
+                    })
                     "diagnostics" -> AlertDialog(onDismissRequest = { dialog = "" }, title = { Text("Диагностика") }, text = {
                         Text(PluginState.diagnostics, Modifier.verticalScroll(rememberScrollState()), fontSize = 11.sp)
                     }, confirmButton = { TextButton(onClick = { shareDiagnostics() }) { Text("Поделиться") } }, dismissButton = { TextButton(onClick = { dialog = "" }) { Text("Закрыть") } })
@@ -301,6 +340,7 @@ private fun themeName(value: String) = when (value) { "dark" -> "Тёмное"; 
     val data = when (name) {
         "wifi" -> "M3,8 Q12,0 21,8 M6,12 Q12,6 18,12 M9,16 Q12,13 15,16 M12,20 L12,20.1"
         "shield" -> "M12,3 L20,6 V12 Q20,18 12,22 Q4,18 4,12 V6 Z"
+        "pulse" -> "M2,12 H7 L10,4 L14,20 L17,12 H22"
         "power" -> "M12,2 V12 M6,5 A9,9 0,1 0,18 5"
         "refresh" -> "M20,10 A8,8 0,0 0,5 6 M5,2 V7 H10 M4,14 A8,8 0,0 0,19 18 M19,22 V17 H14"
         "battery" -> "M9,4 V2 H15 V4 M7,5 H17 V22 H7 Z M10,9 V18 M14,9 V18"

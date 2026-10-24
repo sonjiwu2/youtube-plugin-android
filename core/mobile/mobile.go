@@ -102,3 +102,13 @@ func (e *Engine) Diagnostics() string {
 	}
 	return e.inner.Diagnostics()
 }
+
+func (e *Engine) CheckConnectivity() string {
+	e.mu.Lock()
+	inner := e.inner
+	e.mu.Unlock()
+	if inner == nil {
+		return `{"error":"Движок остановлен","checks":[]}`
+	}
+	return inner.CheckConnectivity()
+}

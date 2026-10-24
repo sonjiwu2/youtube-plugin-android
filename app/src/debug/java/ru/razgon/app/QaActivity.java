@@ -9,6 +9,11 @@ public class QaActivity extends Activity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         if (VpnService.prepare(this) != null) { finish(); return; }
+        if (getIntent().getBooleanExtra("check", false)) {
+            PluginVpnService.Companion.check(this);
+            finish();
+            return;
+        }
         getSharedPreferences("plugin", MODE_PRIVATE).edit()
             .putString("strategy", getIntent().getStringExtra("strategy"))
             .putString("dns", "auto").putBoolean("enabled", true)
