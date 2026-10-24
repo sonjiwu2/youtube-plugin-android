@@ -54,8 +54,10 @@ func TestFirstFlightCancellationClosesBlockedSocket(t *testing.T) {
 		t.Fatal("accepted a route without TLS")
 	}
 	server.SetReadDeadline(time.Now().Add(time.Second))
-	if _, err := server.Read(make([]byte, 1)); err == nil {
-		t.Fatal("cancelled socket remained open")
+	// Cancellation callbacks run asynchronously. A pending byte may complete
+	// before Close wins; wait for EOF instead of mistaking that byte for a leak.
+	if _, err := io.Copy(io.Discard, server); err != nil {
+		t.Fatal("cancelled socket did not close within the deadline:", err)
 	}
 }
 
