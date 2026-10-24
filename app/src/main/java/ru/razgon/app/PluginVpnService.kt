@@ -5,9 +5,13 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.ComponentName
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
+import android.graphics.BitmapFactory
+import android.graphics.Color
 import android.net.Network
 import android.net.VpnService
 import android.os.Build
@@ -28,11 +32,30 @@ class PluginVpnService : VpnService() {
     private var descriptor: ParcelFileDescriptor? = null
     private var restartRequested = false
     private var notified = ""
+    private val notificationLogo by lazy {
+        BitmapFactory.decodeResource(resources, R.drawable.launcher_art,
+            BitmapFactory.Options().apply { inSampleSize = 4 })
+    }
+    private val notificationDismissed = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action != NOTIFICATION_DISMISSED) return
+            // Android 14+ permits swiping ongoing notifications. Restore the existing
+            // service's status without restarting the VPN or interrupting its sockets.
+            scope.launch {
+                delay(300)
+                if (settings.read().enabled && worker?.isActive == true) {
+                    notify(PluginState.mutable.value, force = true)
+                }
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
         if (Build.VERSION.SDK_INT >= 26) getSystemService(NotificationManager::class.java).createNotificationChannel(
             NotificationChannel(CHANNEL, "Фоновое подключение", NotificationManager.IMPORTANCE_LOW))
+        ContextCompat.registerReceiver(this, notificationDismissed,
+            IntentFilter(NOTIFICATION_DISMISSED), ContextCompat.RECEIVER_NOT_EXPORTED)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -181,16 +204,23 @@ class PluginVpnService : VpnService() {
     private fun notification(state: ConnectionState): Notification {
         val speed = settings.read().notificationSpeed
         val stop = PendingIntent.getService(this, 1, Intent(this, PluginVpnService::class.java).setAction(STOP), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val dismissed = PendingIntent.getBroadcast(this, 2,
+            Intent(NOTIFICATION_DISMISSED).setPackage(packageName),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         return NotificationCompat.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_service)
+            .setLargeIcon(notificationLogo).setColor(Color.rgb(232, 66, 75))
             .setContentTitle("Youtube Plugin · ${stateText(state.state)}")
             .setContentText(if (speed) "↓ ${speedText(state.downSpeed)} Мбит/с   ↑ ${speedText(state.upSpeed)} Мбит/с" else "Подключение для приложения YouTube")
-            .setContentIntent(openIntent()).setOnlyAlertOnce(true).setSilent(true).setOngoing(true)
+            .setContentIntent(openIntent()).setDeleteIntent(dismissed).setAutoCancel(false)
+            .setOnlyAlertOnce(true).setSilent(true).setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .addAction(0, "Выключить", stop).build()
+            .addAction(0, "Выключить", stop).build().apply {
+                flags = flags or Notification.FLAG_NO_CLEAR
+            }
     }
-    private fun notify(state: ConnectionState) {
+    private fun notify(state: ConnectionState, force: Boolean = false) {
         val fingerprint = "${state.state}|${settings.read().notificationSpeed}|${speedText(state.downSpeed)}|${speedText(state.upSpeed)}"
-        if (fingerprint == notified) return
+        if (!force && fingerprint == notified) return
         notified = fingerprint
         getSystemService(NotificationManager::class.java).notify(NOTIFICATION, notification(state))
         refreshTile(this)
@@ -201,6 +231,7 @@ class PluginVpnService : VpnService() {
         scope.cancel(); stopSelf(); super.onRevoke()
     }
     override fun onDestroy() {
+        unregisterReceiver(notificationDismissed)
         scope.cancel()
         super.onDestroy()
     }
@@ -211,6 +242,7 @@ class PluginVpnService : VpnService() {
         private const val CHECK = "ru.razgon.app.CHECK"
         private const val CHANNEL = "connection"
         private const val NOTIFICATION = 43
+        private const val NOTIFICATION_DISMISSED = "ru.razgon.app.NOTIFICATION_DISMISSED"
         fun start(context: Context, reconfigure: Boolean = false) {
             ContextCompat.startForegroundService(context, Intent(context, PluginVpnService::class.java).apply { if (reconfigure) action = RECONFIGURE })
         }
