@@ -10,7 +10,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.ServiceInfo
-import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.net.Network
 import android.net.VpnService
@@ -32,10 +31,6 @@ class PluginVpnService : VpnService() {
     private var descriptor: ParcelFileDescriptor? = null
     private var restartRequested = false
     private var notified = ""
-    private val notificationLogo by lazy {
-        BitmapFactory.decodeResource(resources, R.drawable.launcher_art,
-            BitmapFactory.Options().apply { inSampleSize = 4 })
-    }
     private val notificationDismissed = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action != NOTIFICATION_DISMISSED) return
@@ -208,7 +203,7 @@ class PluginVpnService : VpnService() {
             Intent(NOTIFICATION_DISMISSED).setPackage(packageName),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         return NotificationCompat.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_service)
-            .setLargeIcon(notificationLogo).setColor(Color.rgb(232, 66, 75))
+            .setColor(Color.rgb(232, 66, 75))
             .setContentTitle("Youtube Plugin · ${stateText(state.state)}")
             .setContentText(if (speed) "↓ ${speedText(state.downSpeed)} Мбит/с   ↑ ${speedText(state.upSpeed)} Мбит/с" else "Подключение для приложения YouTube")
             .setContentIntent(openIntent()).setDeleteIntent(dismissed).setAutoCancel(false)
