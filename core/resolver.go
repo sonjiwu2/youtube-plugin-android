@@ -28,6 +28,8 @@ type Resolver struct {
 	sources       map[string]string
 	fallback      map[string][]string
 	inflight      map[string]chan struct{}
+	lastErrors    map[string]string
+	transports    map[string]*http.Transport
 	dialBootstrap func(context.Context, string) (net.Conn, error)
 }
 
@@ -99,13 +101,9 @@ func (r *Resolver) Resolve(ctx context.Context, host string) ([]net.IP, error) {
 	}
 	r.mu.Lock()
 	providers := append([]dohProvider{}, r.providers...)
-	if r.preferred != "" {
-		providers = nil
-		for _, p := range r.providers {
-			if p.Host == r.preferred {
-				providers = append(providers, p)
-			}
-		}
+	preferred := r.preferred
+	if preferred == "" && len(providers) > 0 {
+		preferred = providers[0].Host
 	}
 	r.mu.Unlock()
 	type sourcedResult struct {
@@ -115,6 +113,22 @@ func (r *Resolver) Resolve(ctx context.Context, host string) ([]net.IP, error) {
 	answers := make(chan sourcedResult, len(providers))
 	for _, p := range providers {
 		go func(p dohProvider) {
+			delay := time.Duration(0)
+			if p.Host != preferred {
+				delay += 450 * time.Millisecond
+			}
+			if net.ParseIP(p.IP).To4() == nil {
+				delay += 600 * time.Millisecond
+			}
+			if delay > 0 {
+				timer := time.NewTimer(delay)
+				defer timer.Stop()
+				select {
+				case <-timer.C:
+				case <-ctx.Done():
+					return
+				}
+			}
 			ips, ttl, _ := r.query(ctx, p, host)
 			answers <- sourcedResult{result{ips, ttl}, p.Host}
 		}(p)
@@ -135,6 +149,9 @@ func (r *Resolver) Resolve(ctx context.Context, host string) ([]net.IP, error) {
 					clear(r.sources)
 				}
 				r.sources[host] = a.source
+				if r.preferred == "" {
+					r.preferred = a.source
+				}
 				r.mu.Unlock()
 				return a.ips, nil
 			}
@@ -320,14 +337,55 @@ func (r *Resolver) candidates(host string, destination net.IP) []net.IP {
 	return []net.IP{destination}
 }
 
-func (r *Resolver) queryTypeRoute(ctx context.Context, p dohProvider, host, kind string, direct bool) ([]net.IP, time.Duration, error) {
-	tr := &http.Transport{Proxy: nil, TLSClientConfig: &tls.Config{ServerName: p.Host, MinVersion: tls.VersionTLS12}, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		if r.dialBootstrap != nil && !direct {
-			return r.dialBootstrap(ctx, p.IP)
+func (r *Resolver) transport(p dohProvider, direct bool) *http.Transport {
+	key := fmt.Sprintf("%s/%s/%v", p.Host, p.IP, direct)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.transports == nil {
+		r.transports = map[string]*http.Transport{}
+	}
+	if tr := r.transports[key]; tr != nil {
+		return tr
+	}
+	// Cronet resolves many CDN names at once. Reuse encrypted DNS connections
+	// instead of creating up to 24 TCP handshakes per hostname and starving ciadpi.
+	tr := &http.Transport{Proxy: nil, ForceAttemptHTTP2: true,
+		MaxConnsPerHost: 2, MaxIdleConnsPerHost: 2, IdleConnTimeout: 60 * time.Second,
+		TLSHandshakeTimeout: 4 * time.Second, TLSClientConfig: &tls.Config{ServerName: p.Host, MinVersion: tls.VersionTLS12},
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			if r.dialBootstrap != nil && !direct {
+				return r.dialBootstrap(ctx, p.IP)
+			}
+			return (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort(p.IP, "443"))
+		}}
+	r.transports[key] = tr
+	return tr
+}
+
+func (r *Resolver) closeIdle() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, tr := range r.transports {
+		tr.CloseIdleConnections()
+	}
+}
+
+func (r *Resolver) queryTypeRoute(ctx context.Context, p dohProvider, host, kind string, direct bool) (ips []net.IP, duration time.Duration, failure error) {
+	defer func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if r.lastErrors == nil {
+			r.lastErrors = map[string]string{}
 		}
-		return (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort(p.IP, "443"))
-	}}
-	defer tr.CloseIdleConnections()
+		key := fmt.Sprintf("%s %s direct=%v", p.Host, p.IP, direct)
+		if failure != nil && !errors.Is(failure, context.Canceled) {
+			r.lastErrors[key] = failure.Error()
+		}
+		if failure == nil {
+			delete(r.lastErrors, key)
+		}
+	}()
+	tr := r.transport(p, direct)
 	client := &http.Client{Transport: tr, Timeout: 5 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	req, err := http.NewRequestWithContext(ctx, "GET", "https://"+p.Host+p.Path+"?name="+url.QueryEscape(host)+"&type="+kind, nil)
 	if err != nil {
@@ -353,7 +411,7 @@ func (r *Resolver) queryTypeRoute(ctx context.Context, p dohProvider, host, kind
 	if err = json.NewDecoder(io.LimitReader(resp.Body, 65536)).Decode(&body); err != nil || body.Status != 0 {
 		return nil, 0, errors.New("DoH answer error")
 	}
-	var ips []net.IP
+	ips = nil
 	ttl := 300
 	for _, a := range body.Answer {
 		if a.Type == 1 || a.Type == 28 {

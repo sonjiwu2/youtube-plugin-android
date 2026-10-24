@@ -7,9 +7,36 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestProbeRetriesDNSBeforeDiscardingManualStrategy(t *testing.T) {
+	e, err := Start(Options{Direct: true, Strategy: "disorder-tlsrec", VPN: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Stop()
+	id := e.Snapshot().StrategyID
+	var calls atomic.Int32
+	e.wg.Add(1)
+	go e.probeLoop(func(context.Context, *childProcess) error {
+		if calls.Add(1) == 1 {
+			return errors.New("temporary DNS route failure")
+		}
+		return nil
+	})
+	e.wakeProbe()
+	deadline := time.Now().Add(time.Second)
+	for !e.Snapshot().Verified && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	s := e.Snapshot()
+	if !s.Verified || s.State != "ready" || s.StrategyID != id || s.Attempts != 1 || calls.Load() != 2 {
+		t.Fatalf("a DNS hiccup discarded the preset: %+v calls=%d", s, calls.Load())
+	}
+}
 
 func TestProbeSelectionAndExhaustion(t *testing.T) {
 	for _, success := range []bool{true, false} {

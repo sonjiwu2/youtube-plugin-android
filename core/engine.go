@@ -172,6 +172,7 @@ func (e *Engine) Snapshot() Status {
 func (e *Engine) StatusJSON() string { b, _ := json.Marshal(e.Snapshot()); return string(b) }
 func (e *Engine) Stop() {
 	e.cancel()
+	e.resolver.closeIdle()
 	e.listener.Close()
 	e.switchMu.Lock()
 	e.mu.Lock()
@@ -450,7 +451,9 @@ func (e *Engine) copyDown(dst, src net.Conn, video bool, id string, counted bool
 			}
 			if video {
 				e.status.VideoBytes += int64(n)
-				e.lastVideo = time.Now()
+				if total >= 32768 {
+					e.lastVideo = time.Now()
+				}
 				if total == int64(n) {
 					e.status.VideoStreams++
 				}

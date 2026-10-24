@@ -28,6 +28,12 @@ func (e *Engine) eventLocked(id, message string) {
 	if len(message) > 700 {
 		message = message[:700]
 	}
+	// Repeated DNS retries must not evict the original failure from the report.
+	for i := len(e.events) - 1; i >= 0 && i >= len(e.events)-8; i-- {
+		if e.events[i].Strategy == id && e.events[i].Message == message {
+			return
+		}
+	}
 	e.events = append(e.events, diagnosticEvent{time.Now().UTC().Format(time.RFC3339), id, message})
 	if len(e.events) > 80 {
 		e.events = e.events[len(e.events)-80:]
@@ -38,10 +44,20 @@ func (e *Engine) eventLocked(id, message string) {
 func (e *Engine) Diagnostics() string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	var dnsErrors map[string]string
+	if e.resolver != nil {
+		e.resolver.mu.Lock()
+		dnsErrors = make(map[string]string, len(e.resolver.lastErrors))
+		for k, v := range e.resolver.lastErrors {
+			dnsErrors[k] = v
+		}
+		e.resolver.mu.Unlock()
+	}
 	b, _ := json.MarshalIndent(struct {
-		Status Status            `json:"status"`
-		Events []diagnosticEvent `json:"events"`
-	}{e.status, e.events}, "", "  ")
+		Status    Status            `json:"status"`
+		Events    []diagnosticEvent `json:"events"`
+		DNSErrors map[string]string `json:"dnsErrors,omitempty"`
+	}{e.status, e.events, dnsErrors}, "", "  ")
 	return string(b)
 }
 
@@ -56,6 +72,7 @@ func (e *Engine) wakeProbe() {
 // ресурса или несколько байт TLS не являются доказательством рабочего обхода.
 func (e *Engine) probeLoop(check func(context.Context, *childProcess) error) {
 	defer e.wg.Done()
+	retried := map[string]bool{}
 	for {
 		select {
 		case <-e.ctx.Done():
@@ -95,6 +112,14 @@ func (e *Engine) probeLoop(check func(context.Context, *childProcess) error) {
 			e.mu.Unlock()
 			if e.resolver != nil {
 				e.resolver.retryAfterFailure("m.youtube.com")
+				if !retried[id] {
+					retried[id] = true
+					e.mu.Lock()
+					e.eventLocked(id, "Повторная проверка той же стратегии через резервный DNS")
+					e.mu.Unlock()
+					e.wakeProbe()
+					continue
+				}
 			}
 			e.next(id)
 		}
